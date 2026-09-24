@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>물렁 난투 — 고멤 4인 물리 난투</title>
+  <meta name="description" content="말랑한 고멤들이 치고받는 4인 물리 난투 웹게임 (비공식 팬게임)">
+  <meta name="theme-color" content="#1b1530">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='17' r='13' fill='%23f2cf2f'/%3E%3Cellipse cx='12' cy='14' rx='2' ry='3' fill='%23141418'/%3E%3Cellipse cx='20' cy='14' rx='2' ry='3' fill='%23141418'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Jua&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }</script>
+</head>
+<body>
+<div id="app">
+
+  <!-- 타이틀 -->
+  <section class="screen active" id="scr-title">
+    <div class="blobs" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="title-wrap">
+      <h1 class="logo"><span class="l1">물렁</span><span class="l2">난투</span></h1>
+      <p class="sub">고멤들의 4인 물리 난투 · MMA 에디션</p>
+      <div class="card title-card">
+        <label class="field"><span>닉네임</span><input id="name" maxlength="10" placeholder="이름을 입력하세요" autocomplete="nickname"></label>
+        <button class="btn big primary" id="btn-quick">⚡ 바로 시작 <small>봇 3명과 한 판</small></button>
+        <button class="btn big" id="btn-offline">🎮 오프라인 대기실 <small>혼자 연습 · 한 컴퓨터에서 같이</small></button>
+        <div class="split"><span>온라인</span></div>
+        <button class="btn big accent" id="btn-create">🌐 온라인 방 만들기</button>
+        <div class="join-row">
+          <input id="code" maxlength="5" placeholder="초대코드" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <button class="btn" id="btn-join">참가</button>
+        </div>
+        <p class="error" id="title-error" role="alert"></p>
+      </div>
+      <div class="title-links">
+        <button class="link" id="btn-help">조작법</button>
+        <button class="link" id="btn-roster">캐릭터 소개</button>
+        <button class="link" id="btn-settings">설정</button>
+        <a class="link" href="/">2인 방탈출 「맞은편」</a>
+      </div>
+      <p class="disclaimer">비공식 팬게임입니다. 등장인물의 이름과 설정은 각 방송인에게 있으며, 공식 아바타 그림을 쓰지 않은 캐리커처입니다. 영리 목적으로 쓰지 않습니다.</p>
+    </div>
+  </section>
+
+  <!-- 대기실 -->
+  <section class="screen" id="scr-lobby">
+    <div class="blobs dim" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="lobby">
+      <header class="lobby-head">
+        <button class="btn small ghost" id="btn-lobby-leave">← 나가기</button>
+        <div class="lobby-title">
+          <span id="lobby-kind">오프라인</span>
+          <div class="code-box hidden" id="code-box">초대코드 <b id="lobby-code">-----</b>
+            <button class="btn tiny" id="btn-copy-code">복사</button><button class="btn tiny" id="btn-copy-link">링크 복사</button>
+          </div>
+        </div>
+        <div class="lobby-sound"><button class="btn small ghost" id="btn-lobby-help">조작법</button></div>
+      </header>
+      <div class="slots" id="slots"></div>
+      <div class="lobby-bottom">
+        <div class="settings" id="settings">
+          <div class="set-row"><span>맵</span><div class="chips" id="map-chips"></div></div>
+          <div class="set-row"><span>승리 조건</span><div class="chips" id="wins-chips"></div></div>
+        </div>
+        <div class="lobby-actions">
+          <button class="btn" id="btn-add-bot">🤖 봇 추가</button>
+          <button class="btn" id="btn-add-local">➕ 이 컴퓨터에 플레이어 추가</button>
+          <button class="btn big primary" id="btn-start">경기 시작!</button>
+          <p class="note" id="lobby-note"></p>
+        </div>
+      </div>
+      <p class="pad-hint" id="pad-hint">🎮 게임패드를 연결하고 아무 버튼이나 누르면 플레이어로 추가돼요.</p>
+    </div>
+  </section>
+
+  <!-- 경기 -->
+  <section class="screen" id="scr-game">
+    <div id="view"></div>
+    <div id="nameplates"></div>
+    <div class="hud-top" id="hud-top"></div>
+    <div class="hud-timer" id="hud-timer"></div>
+    <div class="announce" id="announce"></div>
+    <div class="hud-bottom" id="hud-bottom"></div>
+    <div class="net-badge hidden" id="net-badge"></div>
+    <button class="btn small ghost hud-menu" id="btn-menu">☰</button>
+    <div class="touch-ui hidden" id="touch-ui">
+      <div class="stick" id="stick"><div class="knob"></div></div>
+      <div class="tbtns">
+        <button data-b="handL">왼손</button><button data-b="handR">오른손</button>
+        <button data-b="kick">발</button><button data-b="head">박치기</button>
+        <button data-b="grapple" class="mma">MMA</button><button data-b="jump" class="jump">점프</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 결과 -->
+  <section class="screen" id="scr-result">
+    <div class="blobs" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="result card" id="result"></div>
+  </section>
+
+  <div class="modal-back hidden" id="modal"><div class="modal card" id="modal-box" role="dialog" aria-modal="true"></div></div>
+  <div class="toast-box" id="toasts"></div>
+  <div class="loading hidden" id="loading"><div class="spinner"></div><p id="loading-text">불러오는 중…</p></div>
+</div>
+<script type="module" src="./js/client/main.js"></script>
+</body>
+</html>
