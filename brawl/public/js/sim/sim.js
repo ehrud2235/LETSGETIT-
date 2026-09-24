@@ -258,19 +258,20 @@ export class Sim {
     const rel = M.len(M.sub(va, vv));
     const m = att.mods;
     const base = s.kind === 'hand' ? 1.0 * m.punchPower : s.kind === 'foot' ? 1.25 * m.kickPower : 1.3 * m.headPower;
-    const partMul = vicInfo.part === 'head' ? 1.7 : vicInfo.part === 'torso' || vicInfo.part === 'pelvis' ? 1 : 0.55;
+    const partMul = vicInfo.part === 'head' ? 1.3 : vicInfo.part === 'torso' || vicInfo.part === 'pelvis' ? 1 : 0.6;
     const ground = att.grab && att.grab.kind === 'mount' ? 1.5 : 1;
-    const dmg = M.clamp((rel - 1.2) * 3.1, 3, 32) * base * partMul * ground;
+    const dmg = M.clamp((rel - 1.5) * 1.6, 2, 16) * base * partMul * ground;
     vic.damage(dmg, att);
-    // 넉백
+    // 넉백: 맞은 사람의 % 가 높을수록 멀리
     const at = att.bodies.torso.translation();
     const vt = vic.bodies.torso.translation();
     const f = att.forward();
     const away = M.lenXZ(M.sub(vt, at)) > 0.05 ? M.norm({ x: vt.x - at.x, y: 0, z: vt.z - at.z }) : f;
-    const dir = M.norm({ x: away.x + f.x, y: 0.35, z: away.z + f.z });
-    const kb = (1.2 + dmg * 0.09) * (s.kind === 'foot' ? 1.4 : 1);
-    for (const p of ['torso', 'pelvis', vicInfo.part]) vic.addVel(p, M.scale(dir, kb * (p === vicInfo.part ? 1.2 : 0.7)));
-    this.emit({ type: 'hit', slot: vic.slot, by: att.slot, kind: s.kind, part: vicInfo.part, dmg: Math.round(dmg), pos: { x: pos.x, y: pos.y, z: pos.z } });
+    const dir = M.norm({ x: away.x + f.x, y: 0, z: away.z + f.z });
+    const kbBase = (1.1 + dmg * 0.075) * (s.kind === 'foot' ? 1.3 : 1);
+    const kb = vic.launch(dir, kbBase, vicInfo.part);
+    att.stats.maxLaunch = Math.max(att.stats.maxLaunch, kb);
+    this.emit({ type: 'hit', slot: vic.slot, by: att.slot, kind: s.kind, part: vicInfo.part, dmg: Math.round(dmg), kb: Math.round(kb * 10) / 10, pos: { x: pos.x, y: pos.y, z: pos.z } });
   }
 
   onContact(h1, h2) {
@@ -281,10 +282,10 @@ export class Sim {
       if (a.fighter === b.fighter) return;
       // 날아온 몸끼리 세게 부딪힘
       const rel = M.len(M.sub(this.vel(a.fighter.bodies[a.part]), this.vel(b.fighter.bodies[b.part])));
-      if (rel > 7.5) {
-        const dmg = (rel - 7.5) * 2.5;
-        a.fighter.damage(dmg * (a.part === 'head' ? 1.5 : 1), b.fighter.lastHitBy || b.fighter);
-        b.fighter.damage(dmg * (b.part === 'head' ? 1.5 : 1), a.fighter.lastHitBy || a.fighter);
+      if (rel > 8.5 && this.impactReady(a.fighter) && this.impactReady(b.fighter)) {
+        const dmg = Math.min(8, (rel - 8.5) * 1.5);
+        a.fighter.damage(dmg, b.fighter.lastHitBy || b.fighter);
+        b.fighter.damage(dmg, a.fighter.lastHitBy || a.fighter);
         const p = a.fighter.bodies[a.part].translation();
         this.emit({ type: 'hit', slot: a.fighter.slot, by: b.fighter.slot, kind: 'body', part: a.part, dmg: Math.round(dmg), pos: p });
       }
@@ -300,19 +301,27 @@ export class Sim {
       if (rel > 5.5 && M.len(pv) > 4) {
         const dmg = (rel - 5.5) * 3 * (fi.part === 'head' ? 1.6 : 1) * (other.hitMul || 1);
         fi.fighter.damage(dmg, other.thrower || null);
+        fi.fighter.launch(M.norm({ x: pv.x, y: 0, z: pv.z }), 1 + dmg * 0.07, fi.part);
         this.emit({ type: 'hit', slot: fi.fighter.slot, by: other.thrower ? other.thrower.slot : -1, kind: 'prop', part: fi.part, dmg: Math.round(dmg), pos: fb.translation() });
       }
       return;
     }
     if (other.type === 'env') {
-      // 높은 데서 떨어지거나 벽에 처박힘
+      // 바닥·벽에 처박힘: 소리와 먼지는 나지만 % 는 아주 세게 부딪혔을 때만 조금
       const speed = M.len(this.vel(fb));
-      if (speed > 8) {
-        const dmg = Math.min(40, (speed - 8) * 5 * (fi.part === 'head' ? 1.6 : 1));
-        fi.fighter.damage(dmg, fi.fighter.lastHitBy);
-        this.emit({ type: 'slam', slot: fi.fighter.slot, dmg: Math.round(dmg), pos: fb.translation() });
+      if (speed > 8 && this.impactReady(fi.fighter)) {
+        const dmg = speed > 11 ? Math.min(6, (speed - 11) * 1.5) : 0;
+        if (dmg > 0) fi.fighter.damage(dmg, fi.fighter.lastHitBy);
+        this.emit({ type: 'slam', slot: fi.fighter.slot, dmg: Math.round(dmg), speed: Math.round(speed), pos: fb.translation() });
       }
     }
+  }
+
+  /** 한 번 부딪히면 몸의 여러 부위가 연달아 닿으니, 사람마다 0.5초에 한 번만 센다 */
+  impactReady(f) {
+    if (this.time - (f.lastImpactT ?? -9) < 0.5) return false;
+    f.lastImpactT = this.time;
+    return true;
   }
 
   // ─── 탈출 / 탈락 ───────────────────────────────────────────────────────────
@@ -323,7 +332,8 @@ export class Sim {
       const attacker = this.grapple.attackerOf(f);
       if (attacker && attacker.grab && attacker.grab.kind === 'submit') continue; // 서브미션은 게이지로 따로 탈출
       const grip = Math.max(1, ...this.holdersOf(f).map((h) => h.mods.grip));
-      const need = (attacker ? 10 : 7) * grip;
+      // % 가 높을수록 버둥거려도 잘 안 빠져나간다
+      const need = (attacker ? 10 : 7) * grip * (0.6 + f.pct / 150);
       if (f.escape >= need) {
         f.escape = 0;
         this.breakGrabsOn(f);

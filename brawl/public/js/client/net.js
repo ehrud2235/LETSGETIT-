@@ -27,7 +27,7 @@ export class Net {
   connect() {
     return new Promise((resolve, reject) => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${location.host}/brawl-ws`);
+      const ws = new WebSocket(`${proto}://${location.host}/ws`);
       ws.binaryType = 'arraybuffer';
       this.ws = ws;
       let opened = false;

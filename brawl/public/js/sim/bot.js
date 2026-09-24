@@ -44,7 +44,8 @@ export class Bot {
     let bestD = Infinity;
     for (const o of this.sim.fighters) {
       if (o === this.f || o.out) continue;
-      const d = M.distXZ(fp, o.pos()) + (o.koT > 0 ? -1 : 0) + this.rand() * 0.8;
+      // 가깝고, 많이 맞았고(%), 쓰러진 상대를 노린다
+      const d = M.distXZ(fp, o.pos()) + (o.koT > 0 ? -1 : 0) - Math.min(1.5, o.pct / 100) + this.rand() * 0.8;
       if (d < bestD) {
         bestD = d;
         best = o;
@@ -122,7 +123,7 @@ export class Bot {
 
     if (this.mode === 'drag') this.mode = 'approach';
 
-    // 기절한 상대는 끌고 가서 떨어뜨린다. 넘어졌을 뿐이면 올라타거나 걷어찬다.
+    // 날아가서 몸이 풀린 상대는 끌고 가서 떨어뜨린다. 넘어졌을 뿐이면 올라타거나 걷어찬다.
     if (t.koT > 0 && dist < 1.6 && this.mode !== 'grab') {
       this.mode = 'grab';
       this.modeT = 0;

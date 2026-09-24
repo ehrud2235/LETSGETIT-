@@ -9,11 +9,10 @@ export const DEFAULT_MODS = {
   headPower: 1, // 박치기 위력
   jump: 1, // 점프 높이
   airGravity: 1, // 공중에서 받는 중력 (작을수록 천천히 떨어짐)
-  maxHp: 1, // 기절 게이지 크기
-  regen: 1, // 기절 게이지 회복 속도
+  weight: 1, // 무게 — 클수록 맞아도 덜 날아감
   grip: 1, // 잡기 유지력 (상대가 빠져나가기 어려움)
   submit: 1, // 서브미션 조르는 속도
-  recover: 1, // 넘어짐·기절에서 일어나는 속도
+  recover: 1, // 넘어지거나 날아간 뒤 일어나는 속도
   reach: 1, // 팔 길이
   speed: 1, // 이동 속도
 };
@@ -36,7 +35,7 @@ export const ROSTER = [
     name: '풍신',
     tagline: '600살 먹은 바람의 마법사',
     passive: { name: '바람 풍!', desc: '점프력 +30%, 공중에서 천천히 떨어진다' },
-    mods: { jump: 1.3, airGravity: 0.72 },
+    mods: { jump: 1.3, airGravity: 0.85 },
     look: {
       skin: '#f3d9c4', top: '#23252e', sleeves: '#23252e', pants: '#23252e', shoes: '#111111',
       hair: { color: '#e9e9ef', style: 'long' }, eyes: 'sunglasses',
@@ -47,8 +46,8 @@ export const ROSTER = [
     id: 'dopamine',
     name: '도파민박사',
     tagline: '초월적인 내구도의 강화인간',
-    passive: { name: '강화인간', desc: '기절 게이지 +40%, 게이지 회복 +30%' },
-    mods: { maxHp: 1.4, regen: 1.3 },
+    passive: { name: '강화인간', desc: '묵직한 몸: 맞아도 17% 덜 날아간다' },
+    mods: { weight: 1.2 },
     look: {
       skin: '#f6dfd2', top: '#f4f6fb', sleeves: '#f4f6fb', pants: '#4b3f6b', shoes: '#2a2238',
       hair: { color: '#c9ccd6', style: 'bob' }, eyes: 'blue',
@@ -59,8 +58,8 @@ export const ROSTER = [
     id: 'leedeoksu',
     name: '이덕수 할아바이',
     tagline: '야상 입은 해병대 출신 할아버지',
-    passive: { name: '해병대 악력', desc: '잡기 유지력 +40%, 서브미션 속도 +20%' },
-    mods: { grip: 1.4, submit: 1.2 },
+    passive: { name: '해병대 악력', desc: '잡기 유지력 +30%, 서브미션 속도 +20%' },
+    mods: { grip: 1.3, submit: 1.2 },
     look: {
       skin: '#e2b894', top: '#5c6b3a', sleeves: '#5c6b3a', pants: '#6d6552', shoes: '#2d2a22',
       hair: { color: '#f2f2f2', style: 'short' }, eyes: 'dots',
@@ -96,7 +95,7 @@ export const ROSTER = [
     id: 'roentgenium',
     name: '뢴트게늄',
     tagline: '곡예하는 광대',
-    passive: { name: '광대 곡예', desc: '넘어지거나 기절해도 60% 빨리 일어난다' },
+    passive: { name: '광대 곡예', desc: '날아가거나 넘어져도 60% 빨리 일어난다' },
     mods: { recover: 1.6 },
     look: {
       skin: '#f7f4f0', top: '#e8413a', sleeves: '#f3c623', pants: '#2f6fd6', shoes: '#e8413a',

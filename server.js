@@ -10,30 +10,16 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const zlib = require('zlib');
 const { WebSocketServer } = require('ws');
 const G = require('./game/logic');
-const { createBrawlRooms } = require('./brawl/server/rooms');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const BRAWL_DIR = path.join(__dirname, 'brawl', 'public');
-// 3D 렌더링(Three.js)과 물리엔진(Rapier)은 npm 패키지에서 바로 제공한다 (CDN 없이 LAN 에서도 동작)
-const THREE_DIR = path.join(path.dirname(require.resolve('three')), '..');
+// 3D 렌더링용 Three.js 는 npm 패키지에서 바로 제공한다 (CDN 없이 LAN 에서도 동작)
+const THREE_DIR = path.join(path.dirname(require.resolve('three')), '..', 'build');
 const VENDOR_FILES = {
-  '/vendor/three/three.module.js': path.join(THREE_DIR, 'build', 'three.module.js'),
-  '/vendor/three/three.core.js': path.join(THREE_DIR, 'build', 'three.core.js'),
+  '/vendor/three/three.module.js': path.join(THREE_DIR, 'three.module.js'),
+  '/vendor/three/three.core.js': path.join(THREE_DIR, 'three.core.js'),
 };
-const MOUNTS = [
-  { prefix: '/vendor/three/addons/', dir: path.join(THREE_DIR, 'examples', 'jsm'), long: true },
-  { prefix: '/brawl/', dir: BRAWL_DIR },
-];
-try {
-  // 패키지의 exports 가 package.json 을 숨기므로, 기본 진입 파일(dist/rapier.cjs) 옆의 rapier.mjs 를 쓴다
-  VENDOR_FILES['/vendor/rapier-simd/rapier.mjs'] = path.join(path.dirname(require.resolve('@dimforge/rapier3d-simd-compat')), 'rapier.mjs');
-  VENDOR_FILES['/vendor/rapier/rapier.mjs'] = path.join(path.dirname(require.resolve('@dimforge/rapier3d-compat')), 'rapier.mjs');
-} catch {
-  // rapier 가 없으면 난투 게임만 동작하지 않는다
-}
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 헷갈리는 O/0, I/1 제외
 const CODE_LEN = 5;
 const ROOM_IDLE_TTL_MS = 3 * 60 * 60 * 1000;
@@ -45,7 +31,6 @@ const NICK_MAX_LEN = 12;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
@@ -53,28 +38,6 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
   '.webmanifest': 'application/manifest+json',
 };
-const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.svg', '.json']);
-const gzCache = new Map();
-
-function under(dir, rel) {
-  const p = path.normalize(path.join(dir, rel));
-  return p.startsWith(dir + path.sep) ? p : null;
-}
-
-/** 요청 경로 → 실제 파일 경로 (허용되지 않은 경로면 null) */
-function resolvePath(pathname) {
-  if (VENDOR_FILES[pathname]) return { file: VENDOR_FILES[pathname], long: true };
-  for (const m of MOUNTS) {
-    if (pathname.startsWith(m.prefix)) {
-      let rel = pathname.slice(m.prefix.length);
-      if (rel === '' || rel.endsWith('/')) rel += 'index.html';
-      const file = under(m.dir, rel);
-      return file ? { file, long: !!m.long } : null;
-    }
-  }
-  const file = under(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname);
-  return file ? { file, long: false } : null;
-}
 
 function serveStatic(req, res) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -92,52 +55,23 @@ function serveStatic(req, res) {
     res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
     return;
   }
-  if (pathname === '/brawl') {
-    res.writeHead(301, { Location: '/brawl/' }).end();
-    return;
-  }
-  const target = resolvePath(pathname);
-  if (!target) {
+  if (pathname === '/') pathname = '/index.html';
+  const filePath = VENDOR_FILES[pathname] || path.normalize(path.join(PUBLIC_DIR, pathname));
+  if (!VENDOR_FILES[pathname] && !filePath.startsWith(PUBLIC_DIR + path.sep)) {
     res.writeHead(403).end();
     return;
   }
-  fs.stat(target.file, (statErr, st) => {
-    if (statErr || !st.isFile()) {
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Not found');
       return;
     }
-    const ext = path.extname(target.file).toLowerCase();
-    const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
-    const headers = {
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': target.long ? 'public, max-age=86400' : 'no-cache',
-      ETag: etag,
-    };
-    if (req.headers['if-none-match'] === etag) {
-      res.writeHead(304, headers).end();
-      return;
-    }
-    fs.readFile(target.file, (err, data) => {
-      if (err) {
-        res.writeHead(404).end();
-        return;
-      }
-      const gzipOk = COMPRESSIBLE.has(ext) && /\bgzip\b/.test(req.headers['accept-encoding'] || '') && data.length > 1024;
-      if (gzipOk) {
-        const key = `${target.file}:${etag}`;
-        let gz = gzCache.get(key);
-        if (!gz) {
-          gz = zlib.gzipSync(data, { level: 6 });
-          gzCache.set(key, gz);
-        }
-        headers['Content-Encoding'] = 'gzip';
-        headers.Vary = 'Accept-Encoding';
-        data = gz;
-      }
-      headers['Content-Length'] = data.length;
-      res.writeHead(200, headers);
-      res.end(req.method === 'HEAD' ? undefined : data);
+      'Cache-Control': ext === '.html' ? 'no-cache' : VENDOR_FILES[pathname] ? 'public, max-age=86400' : 'public, max-age=300',
     });
+    res.end(req.method === 'HEAD' ? undefined : data);
   });
 }
 
@@ -459,25 +393,8 @@ function createGameServer() {
   }
 
   const server = http.createServer(serveStatic);
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 });
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 8 * 1024 });
   wss.on('connection', onConnection);
-  const brawl = createBrawlRooms();
-  // 한 서버에서 두 게임의 웹소켓을 경로로 나눈다
-  server.on('upgrade', (req, socket, head) => {
-    let pathname = '';
-    try {
-      pathname = new URL(req.url, 'http://localhost').pathname;
-    } catch {
-      socket.destroy();
-      return;
-    }
-    const target = pathname === '/ws' ? wss : pathname === '/brawl-ws' ? brawl.wss : null;
-    if (!target) {
-      socket.destroy();
-      return;
-    }
-    target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws, req));
-  });
 
   // 끊긴 연결 감지 + 오래된 방 정리. 25초마다 ping 을 보내 프록시/터널이 조용한 연결을 끊지 않게 한다.
   const heartbeat = setInterval(() => {
@@ -494,12 +411,10 @@ function createGameServer() {
     server,
     wss,
     rooms,
-    brawl,
     close(cb) {
       clearInterval(heartbeat);
       for (const ws of wss.clients) ws.terminate();
       wss.close();
-      brawl.close();
       server.close(cb);
     },
   };
@@ -512,6 +427,6 @@ if (require.main === module) {
   const HOST = process.env.HOST || '0.0.0.0';
   const { server } = createGameServer();
   server.listen(PORT, HOST, () => {
-    console.log(`서버 실행 중 → 맞은편 http://localhost:${PORT}  ·  물렁 난투 http://localhost:${PORT}/brawl/`);
+    console.log(`맞은편 서버 실행 중 → http://localhost:${PORT}`);
   });
 }

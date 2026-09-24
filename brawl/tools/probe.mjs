@@ -66,8 +66,8 @@ async function run() {
     sim.step();
     if (sim.phase === 'fight' || t > 3) minUp = Math.min(minUp, upY(A));
     if (i % 30 === 0) {
-      const s = `t=${t.toFixed(1)} A pel=${fmt(A.pos())} up=${upY(A).toFixed(2)} grd=${A.grounded ? 1 : 0} hands=${A.hands.L.mode[0]}${A.hands.R.mode[0]} lift=${A.lift ? 1 : 0} grab=${A.grab ? A.grab.kind + ':' + (A.grab.progress || 0).toFixed(2) : '-'} hp=${A.hp.toFixed(0)}` +
-        (B ? ` | B pel=${fmt(B.pos())} up=${upY(B).toFixed(2)} hp=${B.hp.toFixed(0)} ko=${B.koT.toFixed(1)}` : '');
+      const s = `t=${t.toFixed(1)} A pel=${fmt(A.pos())} up=${upY(A).toFixed(2)} grd=${A.grounded ? 1 : 0} hands=${A.hands.L.mode[0]}${A.hands.R.mode[0]} lift=${A.lift ? 1 : 0} grab=${A.grab ? A.grab.kind + ':' + (A.grab.progress || 0).toFixed(2) : '-'} pct=${A.pct.toFixed(0)}` +
+        (B ? ` | B pel=${fmt(B.pos())} up=${upY(B).toFixed(2)} pct=${B.pct.toFixed(0)} ko=${B.koT.toFixed(1)}` : '');
       log.push(s);
     }
     for (const ev of sim.drainEvents()) if (!['swing', 'jump'].includes(ev.type)) log.push(`   ev t=${t.toFixed(2)} ${ev.type} ${JSON.stringify({ ...ev, t: undefined, pos: undefined, type: undefined })}`);

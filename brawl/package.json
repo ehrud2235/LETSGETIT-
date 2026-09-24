@@ -1,0 +1,20 @@
+{
+  "name": "mullung-brawl",
+  "version": "1.0.0",
+  "description": "물렁 난투 — 고멤 4인 물리 난투 웹게임 (비공식 팬게임)",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.*\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.20.0",
+    "@dimforge/rapier3d-simd-compat": "^0.20.0",
+    "three": "^0.186.0",
+    "ws": "^8.18.0"
+  }
+}

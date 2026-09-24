@@ -121,12 +121,14 @@ function helpHtml() {
   ${CONTROLS_HELP.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join('')}</table>
   <ul class="help-tips">
     <li><b>주먹 버튼을 꾹</b> 누르면 그 손으로 붙잡아요. 잡은 채로 <b>점프</b>를 누르고 있으면 들어 올리고, 떼면 던져요.</li>
-    <li>많이 맞으면 <b>기절</b>해요. 기절한 상대를 끌고 가서 경기장 밖으로 던지면 <b>탈락</b>!</li>
+    <li>맞을수록 <b>%</b> 가 쌓이고, % 가 높을수록 <b>더 멀리 날아가요</b>. 경기장 <b>밖으로 떨어지면 탈락</b> — 다시 살아나지 않아요.</li>
+    <li>떨어진 사람은 남은 사람들의 싸움을 <b>관전</b>해요. 마지막 한 명이 남으면 라운드 끝!</li>
+    <li>% 가 높은 상대는 잡혀도 잘 못 빠져나오고, 던지면 멀리 날아가요.</li>
     <li><b>MMA 버튼</b> 하나로 상황에 맞는 기술이 나가요: 가까운 상대에게 <b>태클</b> → 넘어진 상대 위에서 <b>마운트</b> (주먹 1.5배) → 한 번 더 누르고 꾹 누르면 <b>초크</b>.
       상대를 잡은 채 앞에서 누르면 <b>수플렉스</b>, 등 뒤에서 누르면 <b>리어 네이키드 초크</b>.</li>
     <li>잡히거나 깔리면 <b>아무 버튼이나 연타</b>해서 빠져나와요. 초크는 연타로 게이지를 밀어내야 해요.</li>
     <li>난간·턱·크레인에 손을 뻗어 잡으면 매달리고, 점프를 누르면 기어 올라가요.</li>
-    <li>75초가 지나면 <b>서든데스</b> — 맵이 더 위험해져요. 마지막까지 남은 사람이 라운드 승리!</li>
+    <li>75초가 지나면 <b>서든데스</b> — 맵이 더 위험해져요.</li>
     <li>한 컴퓨터에서 여럿이: 키보드 1 + 키보드 2 + 게임패드 최대 4개. 휴대폰은 터치 버튼으로.</li>
   </ul>`;
 }
@@ -1024,7 +1026,7 @@ function showResult(result, roster, online) {
   const ch = w && ROSTER_BY_ID[w.charId];
   const rows = roster.map((r) => {
     const st = (result.stats || []).find((x) => x.slot === r.slot) || {};
-    return { ...r, wins: result.scores?.[r.slot] || 0, dmg: st.damageDealt || 0, kos: st.kos || 0, elim: st.eliminations || 0 };
+    return { ...r, wins: result.scores?.[r.slot] || 0, dmg: st.damageDealt || 0, elim: st.eliminations || 0 };
   }).sort((a, b) => b.wins - a.wins || b.elim - a.elim || b.dmg - a.dmg);
   const award = (key, title) => {
     const best = rows.reduce((m, r) => (r[key] > (m ? m[key] : 0) ? r : m), null);
@@ -1033,10 +1035,10 @@ function showResult(result, roster, online) {
   $('result').innerHTML = `
     <h2>${w ? `🏆 ${esc(w.name)} 우승!` : '경기 끝!'}</h2>
     ${w ? `<div class="champ"><img alt="" src="${portrait(w.charId)}"><div><b>${esc(ch.name)}</b><p>${esc(ch.passive.name)} · ${esc(ch.passive.desc)}</p></div></div>` : ''}
-    <table><tr><th>플레이어</th><th>승</th><th>준 피해</th><th>기절시킴</th><th>떨어뜨림</th></tr>
+    <table><tr><th>플레이어</th><th>승</th><th>준 피해 (%)</th><th>떨어뜨림</th></tr>
     ${rows.map((r) => `<tr><td class="nm"><span class="dot" style="background:${SLOT_COLORS[r.slot]}"></span>${esc(r.name)} <small>${r.bot ? '🤖' : esc(ROSTER_BY_ID[r.charId]?.name || '')}</small></td>
-      <td>${r.wins}</td><td>${r.dmg}</td><td>${r.kos}</td><td>${r.elim}</td></tr>`).join('')}</table>
-    <div class="awards">${award('dmg', '💥 파괴왕')}${award('kos', '😵 기절 장인')}${award('elim', '🪂 추락 전도사')}</div>
+      <td>${r.wins}</td><td>${r.dmg}</td><td>${r.elim}</td></tr>`).join('')}</table>
+    <div class="awards">${award('dmg', '💥 파괴왕')}${award('elim', '🪂 장외 전문가')}</div>
     <div class="acts">
       ${online ? '' : '<button class="btn big primary" id="r-again">한 판 더!</button>'}
       <button class="btn" id="r-lobby">대기실로</button>

@@ -28,7 +28,7 @@ export class Grapple {
 
   press(f) {
     if (f.grab) {
-      // 기절한 상대는 조를 수 없다 (마운트에서 때리거나 던지는 수밖에)
+      // 몸이 풀린 상대는 조를 수 없다 (마운트에서 때리거나 던지는 수밖에)
       if (f.grab.kind === 'mount' && f.grab.target.koT <= 0) this.start(f, 'submit', f.grab.target, { fromMount: true });
       return;
     }
@@ -133,9 +133,10 @@ export class Grapple {
       if (s.target.out || now > s.until) return false;
       const head = s.target.pos('head');
       if (now - s.start > 0.25 && (head.y < 0.6 || s.target.pos('torso').y < 0.55)) {
-        s.target.damage(22, s.by);
-        this.sim.emit({ type: 'hit', slot: s.target.slot, by: s.by.slot, kind: 'head', part: 'head', dmg: 22, pos: head });
-        this.sim.emit({ type: 'slam', slot: s.target.slot, dmg: 22, pos: head });
+        s.target.damage(18, s.by);
+        s.target.tumble(1.3);
+        this.sim.emit({ type: 'hit', slot: s.target.slot, by: s.by.slot, kind: 'head', part: 'head', dmg: 18, kb: 6, pos: head });
+        this.sim.emit({ type: 'slam', slot: s.target.slot, dmg: 18, pos: head });
         return false;
       }
       return true;
@@ -218,8 +219,10 @@ export class Grapple {
     g.progress -= presses * 0.05;
     g.progress = Math.max(0, g.progress);
     if (g.progress >= 1) {
+      // 탭아웃: 크게 % 가 쌓이고 한동안 축 늘어진다 → 들어서 밖으로 던질 기회
       this.cancel(f);
-      t.knockOut(6.5, f);
+      t.damage(30, f);
+      t.tumble(2.8);
       f.stats.submissions = (f.stats.submissions || 0) + 1;
       this.sim.emit({ type: 'submitWin', slot: t.slot, by: f.slot });
     } else if (g.t > 1 && g.progress <= 0) {

@@ -208,8 +208,17 @@ function factoryDef() {
     // 벨트 옆 난간
     { shape: 'box', size: [7, 0.35, 0.12], pos: [-6.5, 0.17, -1.36], color: '#e8b923', mat: 'hazard' },
     { shape: 'box', size: [7, 0.35, 0.12], pos: [6.5, 0.17, -1.36], color: '#e8b923', mat: 'hazard' },
+    { shape: 'box', size: [7, 0.35, 0.12], pos: [-6.5, 0.17, 1.36], color: '#e8b923', mat: 'hazard' },
+    { shape: 'box', size: [7, 0.35, 0.12], pos: [6.5, 0.17, 1.36], color: '#e8b923', mat: 'hazard' },
+    // 가운데 발판 앞쪽 턱 (살살 밀려서는 안 떨어지게)
+    { shape: 'box', size: [6, 0.35, 0.12], pos: [0, 0.17, 2.94], color: '#e8b923', mat: 'hazard' },
+    { shape: 'box', size: [0.12, 0.35, 1.6], pos: [-2.94, 0.17, 2.16], color: '#e8b923', mat: 'hazard' },
+    { shape: 'box', size: [0.12, 0.35, 1.6], pos: [2.94, 0.17, 2.16], color: '#e8b923', mat: 'hazard' },
+    { shape: 'box', size: [0.12, 0.35, 1.6], pos: [-2.94, 0.17, -2.16], color: '#e8b923', mat: 'hazard' },
+    { shape: 'box', size: [0.12, 0.35, 1.6], pos: [2.94, 0.17, -2.16], color: '#e8b923', mat: 'hazard' },
     // 뒤쪽 발판과 계단
     { shape: 'box', size: [6, 1.4, 1.6], pos: [0, -0.1, -3.8], color: '#4b4f56', mat: 'metal' },
+    { shape: 'box', size: [6, 0.9, 0.1], pos: [0, 1.05, -4.55], color: '#e8b923', mat: 'hazard' }, // 뒤쪽 발판 난간
     { shape: 'box', size: [2.2, 0.3, 1.6], pos: [-4.1, 1.45, -3.8], color: '#6d7179', mat: 'grate' },
     { shape: 'box', size: [2.2, 0.3, 1.6], pos: [4.1, 1.45, -3.8], color: '#6d7179', mat: 'grate' },
     { shape: 'box', size: [0.14, 3.2, 0.14], pos: [-5.1, 0, -4.5], color: '#e8b923', mat: 'hazard', collide: false },
@@ -244,12 +253,17 @@ function factoryDef() {
     objects,
     deco: [{ type: 'factory' }],
     init() {
-      return { beltSpeed: 1.9, crusherPhase: 0 };
+      return { beltSpeed: 1.0, crusherPhase: 0, fast: false };
     },
     update(ctx, dt) {
       const st = ctx.state;
       const t = ctx.sim.time;
       // 벨트: 위에 있는 것을 바깥쪽으로 민다
+      // 30초가 지나면 벨트가 빨라진다
+      if (!st.fast && ctx.sim.roundTime > 30) {
+        st.fast = true;
+        st.beltSpeed = Math.max(st.beltSpeed, 1.6);
+      }
       const onBelt = (p) => Math.abs(p.z) < 1.35 && Math.abs(p.x) > 3.05 && Math.abs(p.x) < 10 && p.y > -0.2 && p.y < 1.1;
       for (const f of ctx.sim.fighters) {
         if (f.out) continue;
@@ -288,7 +302,7 @@ function factoryDef() {
       }
     },
     suddenDeath(ctx) {
-      ctx.state.beltSpeed = 3.3;
+      ctx.state.beltSpeed = 3;
     },
   };
 }
@@ -308,6 +322,13 @@ function pitchDef() {
         { shape: 'box', size: [0.14, 1.9, 0.14], pos: [5.7, 1.2, -1.4], color: '#ffffff' },
         { shape: 'box', size: [0.14, 1.9, 0.14], pos: [5.7, 1.2, 1.4], color: '#ffffff' },
         { shape: 'box', size: [0.14, 0.14, 2.94], pos: [5.7, 2.1, 0], color: '#ffffff' },
+        // 낮은 펜스: 살살 밀려서는 안 떨어지고, 세게 맞아 날아가면 넘어간다
+        { shape: 'box', size: [12, 0.42, 0.12], pos: [0, 0.46, -3.69], color: '#f2f2f2' },
+        { shape: 'box', size: [12, 0.42, 0.12], pos: [0, 0.46, 3.69], color: '#f2f2f2' },
+        { shape: 'box', size: [0.12, 0.42, 2.2], pos: [-5.94, 0.46, -2.58], color: '#f2f2f2' },
+        { shape: 'box', size: [0.12, 0.42, 2.2], pos: [-5.94, 0.46, 2.58], color: '#f2f2f2' },
+        { shape: 'box', size: [0.12, 0.42, 2.2], pos: [5.94, 0.46, -2.58], color: '#f2f2f2' },
+        { shape: 'box', size: [0.12, 0.42, 2.2], pos: [5.94, 0.46, 2.58], color: '#f2f2f2' },
       ],
     },
     { id: 'ball', kind: 'dynamic', shape: 'ball', r: 0.42, pos: [0, 0.8, 0], color: '#ffffff', mat: 'ball', density: 35, restitution: 0.75, hitMul: 1.6 },
@@ -315,7 +336,7 @@ function pitchDef() {
   return {
     id: 'pitch',
     name: '비밀 FC 하늘 구장',
-    desc: '구름 위에 떠 있는 풋살장. 사람이 몰리는 쪽으로 기울어진다. 축구공 조심!',
+    desc: '구름 위에 떠 있는 풋살장. 사람이 몰리는 쪽으로 기울어진다. 낮은 펜스 너머로 날려 버려라!',
     env: {
       bg: '#8fd0ff', sky: ['#4a9fe8', '#9fd8ff', '#e8f6ff'], fog: ['#cfeaff', 30, 90],
       hemi: ['#ffffff', '#88b37a', 0.9], sun: { color: '#fff7e0', intensity: 2.8, pos: [6, 18, 9], size: 11 },

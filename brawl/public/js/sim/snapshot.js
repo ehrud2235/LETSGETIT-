@@ -8,11 +8,11 @@ const POS_SCALE = 500;
 const clamp16 = (v) => Math.max(-32767, Math.min(32767, Math.round(v)));
 
 /**
- * @param {object} s  { tick, time, phase, phaseT, roundTime, round, statuses:[{slot,flags,hp,grab,grabProgress,victimOf,victimProgress,escape}], transforms: Float32Array, nBodies }
+ * @param {object} s  { tick, time, phase, phaseT, roundTime, round, statuses:[{slot,flags,pct,grab,grabProgress,victimOf,victimProgress,escape}], transforms: Float32Array, nBodies }
  */
 export function encodeSnapshot(s) {
   const nF = s.statuses.length;
-  const size = 1 + 4 + 4 + 1 + 4 + 4 + 1 + 1 + 2 + nF * 8 + s.nBodies * 14;
+  const size = 1 + 4 + 4 + 1 + 4 + 4 + 1 + 1 + 2 + nF * 9 + s.nBodies * 14;
   const buf = new ArrayBuffer(size);
   const v = new DataView(buf);
   let o = 0;
@@ -28,7 +28,7 @@ export function encodeSnapshot(s) {
   for (const st of s.statuses) {
     v.setUint8(o, st.slot); o += 1;
     v.setUint8(o, st.flags); o += 1;
-    v.setUint8(o, Math.round(Math.max(0, Math.min(1, st.hp)) * 255)); o += 1;
+    v.setUint16(o, Math.round(Math.max(0, Math.min(999, st.pct || 0))), true); o += 2;
     v.setUint8(o, Math.max(0, GRABS.indexOf(st.grab))); o += 1;
     v.setUint8(o, Math.round(Math.max(0, Math.min(1, st.grabProgress || 0)) * 255)); o += 1;
     v.setUint8(o, Math.max(0, GRABS.indexOf(st.victimOf))); o += 1;
@@ -65,14 +65,14 @@ export function decodeSnapshot(buf) {
     statuses.push({
       slot: v.getUint8(o),
       flags: v.getUint8(o + 1),
-      hp: v.getUint8(o + 2) / 255,
-      grab: GRABS[v.getUint8(o + 3)],
-      grabProgress: v.getUint8(o + 4) / 255,
-      victimOf: GRABS[v.getUint8(o + 5)],
-      victimProgress: v.getUint8(o + 6) / 255,
-      escape: v.getUint8(o + 7) / 10,
+      pct: v.getUint16(o + 2, true),
+      grab: GRABS[v.getUint8(o + 4)],
+      grabProgress: v.getUint8(o + 5) / 255,
+      victimOf: GRABS[v.getUint8(o + 6)],
+      victimProgress: v.getUint8(o + 7) / 255,
+      escape: v.getUint8(o + 8) / 10,
     });
-    o += 8;
+    o += 9;
   }
   const transforms = new Float32Array(nBodies * 7);
   for (let i = 0; i < nBodies; i++) {

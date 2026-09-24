@@ -371,7 +371,3 @@ body.touch .touch-act { right: 14px; bottom: 24px; width: 72px; height: 72px; }
   body.touch .game-body { grid-template-rows: 66dvh auto; }
   body.touch .side { height: 34dvh; min-height: 220px; }
 }
-
-/* 다른 게임 링크 */
-.other-game { display: inline-block; margin-top: 10px; color: #f3e3c3; font-size: 14px; text-decoration: none; padding: 7px 14px; border-radius: 999px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18); }
-.other-game:hover { background: rgba(255,255,255,.16); }

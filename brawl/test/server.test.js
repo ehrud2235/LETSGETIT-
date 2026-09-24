@@ -3,10 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
-const { createGameServer } = require('../server');
+const { createBrawlServer } = require('../server');
 
 function client(port) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/brawl-ws`);
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   const inbox = [];
   const bins = [];
   const waiters = [];
@@ -61,7 +61,7 @@ function inputPacket(slot) {
 }
 
 test('대기실 → 경기 시작 → 스냅샷/입력 중계 → 경기 끝 → 재접속', async (t) => {
-  const srv = createGameServer();
+  const srv = createBrawlServer();
   await new Promise((r) => srv.server.listen(0, '127.0.0.1', r));
   const { port } = srv.server.address();
   t.after(() => new Promise((r) => srv.close(r)));
@@ -213,7 +213,7 @@ test('대기실 → 경기 시작 → 스냅샷/입력 중계 → 경기 끝 →
 });
 
 test('방이 차면 더 못 들어오고, 입력 패킷 모양이 틀리면 버린다', async (t) => {
-  const srv = createGameServer();
+  const srv = createBrawlServer();
   await new Promise((r) => srv.server.listen(0, '127.0.0.1', r));
   const { port } = srv.server.address();
   t.after(() => new Promise((r) => srv.close(r)));
@@ -240,4 +240,31 @@ test('방이 차면 더 못 들어오고, 입력 패킷 모양이 틀리면 버�
   assert.equal(host.bins.length, 0);
   g.close();
   host.close();
+});
+
+test('화면·물리엔진 파일 제공, 상태 확인, 폴더 밖 경로 차단', async (t) => {
+  const srv = createBrawlServer();
+  await new Promise((r) => srv.server.listen(0, '127.0.0.1', r));
+  const { port } = srv.server.address();
+  t.after(() => new Promise((r) => srv.close(r)));
+  const get = (p, headers = {}) => new Promise((resolve, reject) => {
+    const req = require('http').get({ host: '127.0.0.1', port, path: p, headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+  });
+  const home = await get('/');
+  assert.equal(home.status, 200);
+  assert.match(home.body.toString(), /물렁/);
+  for (const p of ['/js/client/main.js', '/js/sim/worker.js', '/vendor/three/three.module.js', '/vendor/rapier-simd/rapier.mjs', '/vendor/rapier/rapier.mjs']) {
+    assert.equal((await get(p)).status, 200, p);
+  }
+  assert.equal((await get('/healthz')).body.toString(), 'ok');
+  const gz = await get('/js/client/main.js', { 'accept-encoding': 'gzip' });
+  assert.equal(gz.headers['content-encoding'], 'gzip');
+  assert.equal((await get('/js/client/main.js', { 'if-none-match': gz.headers.etag })).status, 304);
+  assert.notEqual((await get('/../server.js')).status, 200);
+  assert.notEqual((await get('/%2e%2e/package.json')).status, 200);
 });

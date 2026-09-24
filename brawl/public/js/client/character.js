@@ -24,19 +24,6 @@ function mesh(g, mat, parent, pos = [0, 0, 0], scale = null, rot = null) {
   return m;
 }
 
-function starGeometry() {
-  return cached('star', () => {
-    const s = new THREE.Shape();
-    for (let i = 0; i < 10; i++) {
-      const a = (i / 10) * Math.PI * 2 + Math.PI / 2;
-      const r = i % 2 ? 0.035 : 0.08;
-      if (i) s.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-      else s.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-    }
-    return new THREE.ExtrudeGeometry(s, { depth: 0.02, bevelEnabled: false });
-  });
-}
-
 /**
  * @returns {{ root: THREE.Group, parts: Record<string, THREE.Group>, update(status, t): void }}
  */
@@ -222,32 +209,10 @@ export function buildCharacter(charId, mods) {
     for (const [x, y] of [[0.03, 0.04], [0.07, 0.02], [0.05, -0.03]]) mesh(sphere(0.016, 8, 6), M('#d93a2b'), parts.torso, [x, y, tz + 0.03]);
   }
 
-  // 기절 별
-  const stars = new THREE.Group();
-  const starMat = new THREE.MeshBasicMaterial({ color: '#ffe066' });
-  for (let i = 0; i < 3; i++) {
-    const s = new THREE.Mesh(starGeometry(), starMat);
-    stars.add(s);
-  }
-  stars.visible = false;
-  root.add(stars);
-
   return {
     root,
     parts,
-    stars,
-    /** status: 상태 플래그, t: 시간 */
-    update(status, t) {
-      const ko = status && (status.flags & 2);
-      stars.visible = !!ko && !(status.flags & 1);
-      if (stars.visible) {
-        const hp = parts.head.position;
-        stars.children.forEach((s, i) => {
-          const a = t * 3 + (i / 3) * Math.PI * 2;
-          s.position.set(hp.x + Math.cos(a) * 0.35, hp.y + 0.42 + Math.sin(t * 5 + i) * 0.03, hp.z + Math.sin(a) * 0.35);
-          s.rotation.y = t * 4;
-        });
-      }
-    },
+    /** 상태에 따른 표시 (지금은 따로 없음 — 몸짓이 전부) */
+    update() {},
   };
 }

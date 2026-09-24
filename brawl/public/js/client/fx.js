@@ -1,27 +1,6 @@
-// 타격 효과: 불꽃, 만화 의성어("퍽!"), 먼지, 화면 흔들림, 돌풍 줄무늬
+// 타격 효과: 튀는 먼지·파편, 화면 흔들림, 돌풍 줄무늬 (글자는 띄우지 않는다)
 import * as THREE from 'three';
-import { canvasTexture, FONT } from './materials.js';
-
-const WORDS = { hand: ['퍽!', '빡!', '팍!'], foot: ['뻑!', '콰직!'], head: ['쾅!', '꽝!'], body: ['쿵!'], prop: ['떵!'], slam: ['쿵!'], ko: ['K.O.'], out: ['아웃!'], tap: ['탭!'] };
-const COLORS = { hand: '#fff3b0', foot: '#ffd166', head: '#ff8fa3', body: '#ffffff', prop: '#9be7ff', slam: '#ffffff', ko: '#ffe066', out: '#ff5a5f', tap: '#7cf0a7' };
-
-const texCache = new Map();
-function wordTexture(word, color) {
-  const key = word + color;
-  if (!texCache.has(key)) {
-    texCache.set(key, canvasTexture(256, 128, (g, w, h) => {
-      g.font = `bold 84px ${FONT}`;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.lineWidth = 14;
-      g.strokeStyle = '#1b1b24';
-      g.strokeText(word, w / 2, h / 2 + 4);
-      g.fillStyle = color;
-      g.fillText(word, w / 2, h / 2 + 4);
-    }));
-  }
-  return texCache.get(key);
-}
+import { canvasTexture } from './materials.js';
 
 const dotTex = () => canvasTexture(64, 64, (g, w, h) => {
   const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
@@ -37,7 +16,6 @@ export class Effects {
     this.scene = scene;
     this.group = new THREE.Group();
     scene.add(this.group);
-    this.items = [];
     this.shake = 0;
     this.dot = dotTex();
     const MAX = 400;
@@ -78,49 +56,24 @@ export class Effects {
     }
   }
 
-  word(kind, pos, scale = 1) {
-    const list = WORDS[kind] || WORDS.hand;
-    const word = list[Math.floor(Math.random() * list.length)];
-    const mat = new THREE.SpriteMaterial({ map: wordTexture(word, COLORS[kind] || '#fff'), transparent: true, depthTest: false });
-    const s = new THREE.Sprite(mat);
-    s.position.set(pos.x + (Math.random() - 0.5) * 0.3, pos.y + 0.4, pos.z);
-    s.renderOrder = 10;
-    this.group.add(s);
-    this.items.push({ obj: s, age: 0, life: 0.75, base: 0.9 * scale, vy: 0.9 });
-  }
-
   /** 시뮬레이션 이벤트를 효과로 */
   onEvent(ev, fighterPos) {
     switch (ev.type) {
       case 'hit': {
-        const big = ev.dmg >= 14;
-        this.sparks(ev.pos, ev.kind === 'foot' ? '#ffd166' : '#fff3b0', big ? 18 : 10, big ? 5 : 3);
-        if (ev.dmg >= 6) this.word(ev.kind, ev.pos, big ? 1.25 : 0.9);
-        this.shake = Math.max(this.shake, big ? 0.22 : 0.08);
+        // 세게 날아갈수록 더 많이 튀고 더 흔들린다
+        const kb = ev.kb || 2;
+        const big = kb > 4.5;
+        this.sparks(ev.pos, '#f3eee2', big ? 16 : 7, big ? 4.2 : 2.4);
+        this.shake = Math.max(this.shake, Math.min(0.35, 0.04 + kb * 0.03));
         break;
       }
       case 'slam':
-        this.dust(ev.pos, 12);
-        if (ev.dmg >= 8) this.word('slam', ev.pos, 1);
-        this.shake = Math.max(this.shake, 0.15);
+        this.dust(ev.pos, ev.speed > 10 ? 14 : 8);
+        this.shake = Math.max(this.shake, 0.1);
         break;
-      case 'ko': {
-        const p = fighterPos(ev.slot);
-        if (p) {
-          this.word('ko', p, 1.5);
-          this.sparks(p, '#ffe066', 24, 4);
-        }
-        this.shake = Math.max(this.shake, 0.3);
-        break;
-      }
       case 'out': {
         const p = fighterPos(ev.slot);
-        if (p) this.word('out', { x: p.x, y: Math.max(p.y, -1), z: p.z }, 1.6);
-        break;
-      }
-      case 'submitWin': {
-        const p = fighterPos(ev.slot);
-        if (p) this.word('tap', p, 1.5);
+        if (p) this.dust({ x: p.x, y: Math.max(p.y, -1), z: p.z }, 10);
         break;
       }
       case 'mapEvent':
@@ -133,20 +86,6 @@ export class Effects {
   }
 
   update(dt) {
-    for (let i = this.items.length - 1; i >= 0; i--) {
-      const it = this.items[i];
-      it.age += dt;
-      const k = it.age / it.life;
-      const pop = k < 0.15 ? k / 0.15 : 1;
-      it.obj.scale.set(it.base * 2 * pop, it.base * pop, 1);
-      it.obj.position.y += it.vy * dt;
-      it.obj.material.opacity = k > 0.7 ? 1 - (k - 0.7) / 0.3 : 1;
-      if (it.age >= it.life) {
-        this.group.remove(it.obj);
-        it.obj.material.dispose();
-        this.items.splice(i, 1);
-      }
-    }
     for (let i = this.parts.length - 1; i >= 0; i--) {
       const p = this.parts[i];
       p.age += dt;

@@ -59,6 +59,10 @@ export function partLayout(reach = 1) {
 }
 
 // 깨어 있을 때 부위별 중력 배율 (상체를 가볍게 해서 균형 잡기 쉽게)
+// 맞은 만큼(%) 더 멀리 날아간다 (대난투식). 100%면 넉백이 KB_GROWTH+1 배.
+export const KB_GROWTH = 1.25;
+const KB_MAX = 12; // 한 번에 받는 속도 상한 (m/s)
+const TUMBLE_KB = 3.1; // 이보다 세게 맞으면 잠깐 몸이 풀려서 굴러간다
 const AWAKE_GRAVITY = { pelvis: 1, torso: 0.35, head: 0.2, uArmL: 0.3, lArmL: 0.3, uArmR: 0.3, lArmR: 0.3, thighL: 1, shinL: 1, thighR: 1, shinR: 1 };
 
 /** 팔다리 목표 방향 (바라보는 방향 기준). L 이면 x 부호를 그대로, R 이면 뒤집는다 */
@@ -83,11 +87,10 @@ export class Fighter {
     this.ownHandles = new Set();
     this.joints = [];
 
-    this.maxHp = 100 * this.mods.maxHp;
-    this.hp = this.maxHp;
+    this.pct = 0; // 누적 피해 (%) — 높을수록 멀리 날아간다
     this.lastDamageT = -99;
-    this.koT = 0; // 기절
-    this.downT = 0; // 넘어짐 (기절은 아님)
+    this.koT = 0; // 몸이 풀려 날아가는/구르는 중 (자동으로 일어남)
+    this.downT = 0; // 넘어짐
     this.stunT = 0; // 휘청
     this.out = false; // 탈락
     this.outT = 0;
@@ -111,7 +114,7 @@ export class Fighter {
     this.grab = null; // MMA 동작 상태 (sim/grapple.js 가 관리)
     this.escape = 0; // 잡혔을 때 연타 게이지
     this.grabImmuneT = 0;
-    this.stats = { damageDealt: 0, kos: 0, eliminations: 0 };
+    this.stats = { damageDealt: 0, eliminations: 0, maxLaunch: 0 };
 
     this.build(opt.spawn);
   }
@@ -341,9 +344,6 @@ export class Fighter {
       }
     }
 
-    // 기절 게이지 회복
-    if (t - this.lastDamageT > 2.5) this.hp = Math.min(this.maxHp, this.hp + 9 * this.mods.regen * dt);
-
     const lifted = this.sim.isLifted(this);
     let ctrl = this.downT > 0 ? 0 : this.stunT > 0 ? 0.25 : 1;
     if (lifted) ctrl *= 0.3;
@@ -423,7 +423,7 @@ export class Fighter {
   }
 
   relax() {
-    // 기절 중에도 관절이 완전히 꺾이지 않게 아주 약하게 자세를 유지
+    // 몸이 풀린 동안에도 관절이 완전히 꺾이지 않게 아주 약하게 자세를 유지
     const B = M.qYaw(this.facing);
     for (const side of ['L', 'R']) {
       this.aim(`thigh${side}`, this.toWorld({ x: 0, y: -1, z: 0.1 }), 4, 0.02);
@@ -699,14 +699,17 @@ export class Fighter {
     if (target) {
       // 머리 위로 높이 들어 올렸을수록 멀리 던진다
       const liftK = M.clamp((target.pos('pelvis').y - this.pos('pelvis').y) / 0.9, 0, 1);
-      const hor = 2.5 + 3.6 * liftK;
-      const up = 1.8 + 2.2 * liftK;
+      // 상대의 % 가 높을수록 멀리 날아간다
+      const k = Math.min(2, 0.6 + target.pct / 160) / target.mods.weight;
+      const hor = (2.5 + 3.6 * liftK) * k;
+      const up = (1.8 + 2.2 * liftK) * Math.min(1.35, k);
       for (const side of ['L', 'R']) this.releaseHand(side), (this.hands[side].mode = 'idle');
       target.forEachBody((b) => {
         const v = b.linvel();
         b.setLinvel({ x: v.x * 0.3 + f.x * hor, y: Math.max(v.y, up), z: v.z * 0.3 + f.z * hor }, true);
       });
       target.stunT = Math.max(target.stunT, 1.1);
+      if (k > 1.3) target.tumble(0.4 + (k - 1.3));
       target.markHit(this);
       target.grabImmuneT = 0.6;
       this.sim.emit({ type: 'throw', slot: this.slot, target: target.slot });
@@ -812,7 +815,7 @@ export class Fighter {
     return false;
   }
 
-  // ─── 피해 / 기절 ───────────────────────────────────────────────────────────
+  // ─── 피해(%) / 넉백 ────────────────────────────────────────────────────────
 
   markHit(from) {
     if (from && from !== this) {
@@ -825,23 +828,45 @@ export class Fighter {
     if (this.out || amount <= 0) return;
     this.markHit(from);
     this.lastDamageT = this.sim.time;
-    if (this.koT > 0) {
-      this.koT = Math.min(this.koT + amount * 0.01, 7);
-      return;
-    }
-    this.hp -= amount;
+    this.pct = Math.min(999, this.pct + amount);
     if (from && from !== this) from.stats.damageDealt += amount;
-    this.stunT = Math.max(this.stunT, Math.min(0.7, 0.08 + amount * 0.02));
-    if (this.hp <= 0) this.knockOut(3.4 + Math.min(2, -this.hp * 0.05), from);
+    this.stunT = Math.max(this.stunT, Math.min(0.6, 0.08 + amount * 0.015));
   }
 
-  knockOut(duration, from) {
-    this.hp = 0;
-    this.koT = duration / this.mods.recover;
+  /** 지금 % 에서 넉백 배율 (무게 패시브 반영) */
+  kbScale() {
+    return (1 + (this.pct / 100) * KB_GROWTH) / this.mods.weight;
+  }
+
+  /**
+   * 맞아서 날아가기. dir: 수평 방향, base: 0% 기준 속도, part: 맞은 부위.
+   * 약하면 비틀거리기만 하고, 세면 몸 전체가 풀려서 날아간다.
+   */
+  launch(dir, base, part = 'torso') {
+    if (this.out) return 0;
+    const kb = Math.min(KB_MAX, base * this.kbScale());
+    const lift = Math.min(0.5, 0.28 + this.pct / 600);
+    const d = M.norm({ x: dir.x, y: lift, z: dir.z });
+    if (kb > TUMBLE_KB) {
+      this.forEachBody((b, name) => this.addVel(name, M.scale(d, kb * (name === part ? 1.1 : 1))));
+      this.tumble(0.25 + (kb - TUMBLE_KB) * 0.11);
+    } else {
+      for (const p of new Set(['torso', 'pelvis', part])) this.addVel(p, M.scale(d, kb * (p === part ? 1.2 : 0.75)));
+    }
+    return kb;
+  }
+
+  /** 잠깐 몸이 풀린다 (날아가는 중·세게 넘어짐). 광대 패시브는 빨리 일어난다 */
+  tumble(duration) {
+    const d = duration / this.mods.recover;
+    if (this.koT > 0) {
+      this.koT = Math.max(this.koT, d);
+      return;
+    }
+    this.koT = d;
     this.releaseAll();
+    this.lift = false;
     this.setAwakeGravity(false);
-    if (from && from !== this) from.stats.kos += 1;
-    this.sim.emit({ type: 'ko', slot: this.slot, by: from ? from.slot : -1 });
   }
 
   knockDown(duration) {
@@ -851,10 +876,8 @@ export class Fighter {
 
   wakeUp() {
     this.koT = 0;
-    this.hp = this.maxHp * 0.55;
-    this.stunT = 0.6;
+    this.stunT = Math.max(this.stunT, 0.3);
     this.setAwakeGravity(true);
-    this.sim.emit({ type: 'wake', slot: this.slot });
   }
 
   eliminate() {
@@ -881,7 +904,7 @@ export class Fighter {
     const attacker = this.sim.grapple.attackerOf(this);
     return {
       flags,
-      hp: Math.max(0, this.hp / this.maxHp),
+      pct: this.pct,
       grab: this.grab ? this.grab.kind : null,
       grabProgress: this.grab ? this.grab.progress || 0 : 0,
       victimOf: attacker && attacker.grab ? attacker.grab.kind : null,
