@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>맞은편 — THE OTHER SIDE</title>
+  <meta name="description" content="벽 너머의 누군가와 함께 탈출하는 2인 협동 웹 방탈출 게임">
+  <meta name="theme-color" content="#0b0d14">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='16' height='32' fill='%233b5a99'/%3E%3Crect x='16' width='16' height='32' fill='%23e46a5b'/%3E%3Cpath d='M16 5l3 7h7l-5.5 4.5 2 7.5-6.5-4.5-6.5 4.5 2-7.5L6 12h7z' fill='%23fff6c8'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&family=Nanum+Pen+Script&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js" } }</script>
+</head>
+<body>
+<div id="app">
+
+  <!-- 타이틀 -->
+  <section class="screen active" id="screen-title">
+    <div class="title-bg" aria-hidden="true"><div class="half dawn"></div><div class="half dusk"></div><div class="seam"></div></div>
+    <div class="title-wrap">
+      <h1 class="logo"><span class="dawn">맞은</span><span class="dusk">편</span></h1>
+      <p class="subtitle">THE OTHER SIDE</p>
+      <p class="tagline">같은 방, 다른 시간.<br>벽 너머의 당신은, 누구인가요?</p>
+
+      <div class="card">
+        <label class="field">
+          <span>닉네임</span>
+          <input id="nick" maxlength="12" placeholder="이름을 입력하세요" autocomplete="nickname">
+        </label>
+        <button id="btn-create" class="btn primary wide">방 만들기</button>
+        <div class="divider"><span>또는 초대코드로 참가</span></div>
+        <div class="join-row">
+          <input id="join-code" maxlength="5" placeholder="ABCDE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <button id="btn-join" class="btn">참가하기</button>
+        </div>
+        <p class="error" id="title-error" role="alert"></p>
+      </div>
+
+      <details class="howto">
+        <summary>게임 방법</summary>
+        <ul>
+          <li>2인용 협동 방탈출 게임이에요. 한 명이 방을 만들고, 다른 한 명이 <b>초대코드</b>로 참가합니다.</li>
+          <li>두 사람은 각자 다른 방에서 눈을 뜹니다. 서로의 방은 볼 수 없어요.</li>
+          <li>3D 1인칭으로 방 안을 걸어다녀요. <b>WASD</b> 이동 · <b>마우스</b> 둘러보기 · <b>E</b>나 <b>클릭</b>으로 조사.</li>
+          <li><b>1~6</b> 숫자키로 소지품을 들고, 든 채로 물건을 조사하면 사용합니다. <b>Enter</b>로 대화, <b>Esc</b>로 마우스 커서를 풀어요.</li>
+          <li>휴대폰에서는 왼쪽 아래 조이스틱으로 걷고, 화면을 끌어 둘러보고, 탭해서 조사해요.</li>
+          <li>당신의 행동이 <b>벽 너머의 방</b>을 바꿀 수 있어요. 오른쪽 대화창으로 끊임없이 이야기하세요.</li>
+          <li>막히면 💡 힌트 버튼을 눌러보세요. 소리를 켜고 플레이하는 걸 추천해요. 🎧</li>
+        </ul>
+      </details>
+      <p class="conn-note" id="conn-note"></p>
+    </div>
+  </section>
+
+  <!-- 대기실 -->
+  <section class="screen" id="screen-lobby">
+    <div class="title-bg dim" aria-hidden="true"><div class="half dawn"></div><div class="half dusk"></div><div class="seam"></div></div>
+    <div class="card lobby">
+      <p class="label">초대코드</p>
+      <div class="code" id="lobby-code">-----</div>
+      <div class="row">
+        <button id="btn-copy-code" class="btn small">코드 복사</button>
+        <button id="btn-copy-link" class="btn small">초대 링크 복사</button>
+      </div>
+      <ul class="players" id="lobby-players"></ul>
+      <p class="lobby-note" id="lobby-note"></p>
+      <button id="btn-start" class="btn primary wide" disabled>게임 시작</button>
+      <button id="btn-leave" class="btn ghost wide">나가기</button>
+      <p class="fine">두 사람은 서로 다른 방에서 눈을 뜹니다. 어느 방일지는 시작해봐야 알 수 있어요.</p>
+    </div>
+  </section>
+
+  <!-- 프롤로그 -->
+  <section class="screen" id="screen-prologue">
+    <div class="prologue-text" id="prologue-text"></div>
+    <button id="btn-wake" class="btn primary hidden">눈을 뜬다</button>
+  </section>
+
+  <!-- 게임 -->
+  <section class="screen" id="screen-game">
+    <header class="hud">
+      <div class="hud-left">
+        <span class="room-name" id="hud-room"></span>
+        <span class="timer" id="hud-timer">00:00</span>
+      </div>
+      <div class="hud-right">
+        <span class="partner" id="hud-partner"></span>
+        <button id="btn-hint" class="btn small" title="힌트 (H)">💡 힌트</button>
+        <button id="btn-sound" class="btn small icon" title="소리 켜기/끄기">🔊</button>
+      </div>
+    </header>
+    <div class="game-body">
+      <div class="viewport" id="viewport">
+        <div id="gl"></div>
+        <div class="crosshair" id="crosshair"></div>
+        <div class="prompt" id="prompt"></div>
+        <div class="toasts" id="toasts" aria-live="polite"></div>
+        <div class="narration" id="dialog">
+          <div class="dialog-text" id="dialog-text"></div>
+          <div class="dialog-actions" id="dialog-actions"></div>
+        </div>
+        <div class="hotbar" id="inventory"></div>
+        <div class="keyhelp">WASD 이동 · 마우스 시점 · E/클릭 조사 · 1~6 소지품 · Q 내려놓기 · H 힌트 · Enter 대화 · Esc 커서</div>
+        <div class="lock-overlay" id="lock-overlay">
+          <div class="lock-card">
+            <p class="lock-title">클릭해서 조작하기</p>
+            <p class="lock-keys"><b>WASD</b> 걷기 · <b>마우스</b> 둘러보기 · <b>E / 클릭</b> 조사<br><b>1~6</b> 소지품 · <b>Enter</b> 대화 · <b>Esc</b> 커서 풀기</p>
+          </div>
+        </div>
+        <div class="joystick" id="joystick"><div class="knob"></div></div>
+        <button class="touch-act" id="touch-act" type="button">조사</button>
+        <div class="gl-error hidden" id="gl-error">이 브라우저에서는 3D 화면을 표시할 수 없어요. 최신 Chrome, Edge, Safari, Firefox 에서 접속해주세요.</div>
+      </div>
+      <aside class="side">
+        <div class="side-head">
+          <span>벽 너머의 목소리</span>
+          <label class="filter"><input type="checkbox" id="chat-only"> 대화만 보기</label>
+        </div>
+        <div class="feed" id="feed" aria-live="polite"></div>
+        <form class="chat-form" id="chat-form" autocomplete="off">
+          <input id="chat-input" maxlength="200" placeholder="벽 너머로 말을 건다… (Enter)">
+          <button class="btn small" type="submit">전송</button>
+        </form>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 엔딩 -->
+  <section class="screen" id="screen-ending">
+    <div class="ending-stage" id="ending-stage"></div>
+    <div class="ending-text" id="ending-text"></div>
+    <button class="btn ghost ending-next hidden" id="btn-ending-next">계속 ▸</button>
+  </section>
+
+  <div class="modal-backdrop hidden" id="modal"><div class="modal" id="modal-box" role="dialog" aria-modal="true"></div></div>
+  <div class="conn hidden" id="conn">서버와 다시 연결하는 중…</div>
+  <div class="flash" id="flash"></div>
+</div>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
