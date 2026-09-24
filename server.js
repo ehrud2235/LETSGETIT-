@@ -396,7 +396,7 @@ function createGameServer() {
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 8 * 1024 });
   wss.on('connection', onConnection);
 
-  // 끊긴 연결 감지 + 오래된 방 정리
+  // 끊긴 연결 감지 + 오래된 방 정리. 25초마다 ping 을 보내 프록시/터널이 조용한 연결을 끊지 않게 한다.
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
       if (!ws.isAlive) { ws.terminate(); continue; }
@@ -404,7 +404,7 @@ function createGameServer() {
       ws.ping();
     }
     sweep();
-  }, 30000);
+  }, 25000);
   heartbeat.unref();
 
   return {

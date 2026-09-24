@@ -9,20 +9,41 @@
 
 (두 사람의 정체는 엔딩에서 밝혀집니다. 스포일러는 [`docs/GAME_DESIGN.md`](docs/GAME_DESIGN.md)에 있어요.)
 
-## 실행하기
+## 친구와 하기 (서로 다른 곳에 있어도 OK)
 
-Node.js 18 이상이 필요합니다.
+이 게임은 두 사람이 **같은 주소(URL)** 에 접속해야 합니다. 방법은 두 가지예요.
+
+### 방법 1. 무료로 인터넷에 올리기 — 추천 (터미널 필요 없음)
+
+한 번 올려두면 고정 주소가 생기고, 내 컴퓨터를 꺼도 친구와 언제든 할 수 있어요.
+
+1. 이 코드가 GitHub 저장소에 올라가 있어야 합니다.
+2. <https://render.com> 에 GitHub 계정으로 가입합니다.
+3. **New + → Blueprint** 를 누르고 이 저장소를 고른 뒤 **Apply** 를 누릅니다. (`render.yaml` 에 설정이 들어 있어요)
+4. 몇 분 뒤 `https://the-other-side-xxxx.onrender.com` 같은 주소가 생깁니다. 이 주소를 친구에게 보내면 끝.
+
+알아둘 점: 무료 플랜은 한동안 아무도 접속하지 않으면 서버가 잠들어서, 첫 접속 때 1분 정도 로딩이 걸릴 수 있어요.
+서버가 다시 시작되면 진행 중이던 방은 사라집니다. 게임하는 동안에는 연결이 유지되므로 문제없어요.
+
+### 방법 2. 내 윈도우 PC에서 열고 인터넷 링크로 공유하기
+
+공유기 설정 없이, 내 PC를 켜둔 동안만 친구가 들어올 수 있어요.
+
+1. <https://nodejs.org> 에서 **LTS** 버전을 설치합니다. (한 번만)
+2. 게임 폴더(압축을 푼 폴더)에서 **`play-online.bat`** 을 더블클릭합니다.
+3. 검은 창 두 개가 뜨고, 잠시 뒤 `https://무언가.trycloudflare.com` 주소가 나옵니다.
+4. 그 주소를 내 브라우저로 열고, 같은 주소를 친구에게 보냅니다.
+5. 게임하는 동안 **검은 창 두 개를 닫지 마세요.** 주소는 실행할 때마다 바뀝니다.
+
+### 개발자용
 
 ```bash
 npm install
-npm start
+npm start          # http://localhost:3000
+npm test
 ```
 
-브라우저에서 <http://localhost:3000> 에 접속합니다.
-
-- 같은 와이파이의 친구는 `http://<내 컴퓨터 IP>:3000` 으로 접속하면 됩니다.
-- 포트를 바꾸려면 `PORT=8080 npm start`.
-- 테스트: `npm test`
+`PORT` 환경변수로 포트를 바꿀 수 있고, 상태 확인 경로는 `/healthz` 입니다. 도커가 되는 곳(Fly.io, Railway 등)이라면 `Dockerfile` 을 그대로 쓰면 됩니다.
 
 ## 조작
 
@@ -39,19 +60,13 @@ npm start
 
 한글 입력 상태에서도 WASD 가 그대로 동작합니다(키 위치 기준).
 
-## 인터넷에 올려서 친구와 하기
-
-실시간 방 동기화를 위해 작은 Node 서버가 필요합니다(정적 호스팅인 GitHub Pages 만으로는 동작하지 않아요).
-웹소켓을 지원하는 아무 Node 호스팅이면 됩니다. 예: Render, Railway, Fly.io.
-
-- 빌드 명령: `npm install`
-- 시작 명령: `npm start`
-- 서버는 `PORT` 환경변수를 자동으로 사용합니다. 상태 확인 경로는 `/healthz`.
-
 ## 구조
 
 ```
 server.js            HTTP(정적 파일) + WebSocket(방/초대코드/실시간 동기화)
+play-online.bat      윈도우용: 서버 실행 + 인터넷 공유 링크 만들기
+render.yaml          Render 무료 배포 설정
+Dockerfile           도커 배포 설정
 game/logic.js        퍼즐 규칙, 상태, 모든 대사와 엔딩 (서버에서만 실행)
 public/index.html    화면 구성
 public/style.css
