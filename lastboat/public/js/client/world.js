@@ -1,4 +1,5 @@
 // 맵 데이터를 3D 로. 같은 재질끼리 한 덩어리(mesh)로 합쳐서 그리는 횟수를 줄인다.
+// 덩어리는 48m 구역마다 따로 만들어서, 안개에 묻힌 먼 구역·지하/지상 반대편은 아예 안 그린다.
 // 밤 조명: 달빛 + 손전등 + 가까운 불빛 몇 개만 진짜 조명, 나머지는 바닥의 빛 웅덩이와 전등 후광으로 흉내.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -38,17 +39,22 @@ const MATS = {
   lampHead: { emissive: true },
 };
 
+const CHUNK = 48;
+const UNDER_Z = 380;
+// 안개(지상 0.021, 지하 0.04)에 완전히 묻히는 거리
+const CULL = { surface: 135, under: 70 };
+
 const GROUND_Y = { road: 0.004, asphalt: 0.006, concrete: 0.008, gravel: 0.01, sand: 0.012, grass: 0.03, paving: 0.1, sidewalk: 0.12, tile: 0.02, platform: 0.02, ballast: 0.004, wood: 0.02 };
 
-/** 같은 재질 도형을 모아 두었다가 한 번에 합친다 */
+/** 같은 재질·같은 구역 도형을 모아 두었다가 한 번에 합친다 */
 class Bag {
   constructor() {
     this.lists = new Map();
   }
 
-  add(mat, geo) {
-    if (!this.lists.has(mat)) this.lists.set(mat, []);
-    this.lists.get(mat).push(geo);
+  add(key, geo) {
+    if (!this.lists.has(key)) this.lists.set(key, []);
+    this.lists.get(key).push(geo);
   }
 }
 
@@ -110,8 +116,10 @@ export class World {
     this.group = new THREE.Group();
     scene.add(this.group);
     this.bag = new Bag();
-    this.facadeBags = new Map();
-    this.chainGeos = [];
+    this.facadeBags = new Bag();
+    this.chainGeos = new Bag();
+    this.cullables = [];
+    this.noCull = false;
     this.materials = new Map();
     this.flags = { power: false };
     this.buildGround();
@@ -132,10 +140,15 @@ export class World {
     if (this.materials.has(name)) return this.materials.get(name);
     const def = MATS[name] || MATS.concrete;
     let m;
+    // '높음'이 아니면 반사광 계산이 없는 가벼운 재질 (밤이라 차이가 거의 없다)
+    const lite = this.quality !== 'high';
     if (def.emissive) {
       m = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
     } else if (def.color) {
-      m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: def.rough, flatShading: true });
+      m = lite ? new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }) : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: def.rough, flatShading: true });
+    } else if (lite) {
+      // 금속은 표준 재질에서 어둡게 보이므로 비슷하게 맞춘다
+      m = new THREE.MeshLambertMaterial({ map: surfaceTex(def.tex || name), vertexColors: true, color: new THREE.Color().setScalar(1 - (def.metal ?? 0) * 0.6) });
     } else {
       m = new THREE.MeshStandardMaterial({ map: surfaceTex(def.tex || name), vertexColors: true, roughness: def.rough ?? 0.9, metalness: def.metal ?? 0 });
     }
@@ -144,7 +157,25 @@ export class World {
   }
 
   add(mat, geo) {
-    this.bag.add(mat, geo);
+    this.bag.add(`${mat}|${this.chunkOf(geo)}`, geo);
+  }
+
+  /** 도형이 속한 구역 (가운데 기준). 먼 배경 건물은 'far' 로 늘 그린다 */
+  chunkOf(geo) {
+    if (this.noCull) return 'far';
+    geo.computeBoundingBox();
+    const b = geo.boundingBox;
+    return `${Math.floor((b.min.x + b.max.x) / 2 / CHUNK)},${Math.floor((b.min.z + b.max.z) / 2 / CHUNK)}`;
+  }
+
+  addMesh(mesh, chunk) {
+    mesh.matrixAutoUpdate = false;
+    this.group.add(mesh);
+    if (chunk === 'far') return;
+    const g = mesh.geometry;
+    if (!g.boundingBox) g.computeBoundingBox();
+    const box = g.boundingBox;
+    this.cullables.push({ mesh, box, under: (box.min.z + box.max.z) / 2 > UNDER_Z });
   }
 
   box(mat, x, y0, z, w, h, d, { rot = 0, color = null, offU = 0, offV = 0, rx = 0, rz = 0 } = {}) {
@@ -155,37 +186,55 @@ export class World {
   }
 
   flush() {
-    for (const [mat, list] of this.bag.lists) {
+    const lite = this.quality !== 'high';
+    for (const [key, list] of this.bag.lists) {
       if (!list.length) continue;
+      const [mat, chunk] = key.split('|');
       const g = mergeGeometries(list, false);
       const mesh = new THREE.Mesh(g, this.mat(mat));
       mesh.castShadow = mat !== 'lampHead' && mat !== 'glass';
       mesh.receiveShadow = true;
-      mesh.matrixAutoUpdate = false;
-      this.group.add(mesh);
+      this.addMesh(mesh, chunk);
     }
-    for (const [style, list] of this.facadeBags) {
-      const g = mergeGeometries(list, false);
-      const f = facadeTex(style);
-      const m = new THREE.MeshStandardMaterial({ map: f.map, emissiveMap: f.em, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.9, roughness: 0.9, vertexColors: true });
-      const mesh = new THREE.Mesh(g, m);
+    const facadeMats = new Map();
+    for (const [key, list] of this.facadeBags.lists) {
+      const [style, chunk] = key.split('|');
+      if (!facadeMats.has(style)) {
+        const f = facadeTex(Number(style));
+        const P = { map: f.map, emissiveMap: f.em, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.9, vertexColors: true };
+        facadeMats.set(style, lite ? new THREE.MeshLambertMaterial(P) : new THREE.MeshStandardMaterial({ ...P, roughness: 0.9 }));
+      }
+      const mesh = new THREE.Mesh(mergeGeometries(list, false), facadeMats.get(style));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.matrixAutoUpdate = false;
-      this.group.add(mesh);
+      this.addMesh(mesh, chunk);
     }
-    if (this.chainGeos.length) {
-      const g = mergeGeometries(this.chainGeos, false);
+    if (this.chainGeos.lists.size) {
       const t = chainTex();
-      const m = new THREE.MeshStandardMaterial({ map: t, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.5, metalness: 0.5, vertexColors: true });
-      const mesh = new THREE.Mesh(g, m);
-      mesh.castShadow = true;
-      mesh.matrixAutoUpdate = false;
-      this.group.add(mesh);
+      const P = { map: t, alphaTest: 0.45, side: THREE.DoubleSide, vertexColors: true };
+      const m = lite ? new THREE.MeshLambertMaterial({ ...P, color: new THREE.Color().setScalar(0.7) }) : new THREE.MeshStandardMaterial({ ...P, roughness: 0.5, metalness: 0.5 });
+      for (const [chunk, list] of this.chainGeos.lists) {
+        const mesh = new THREE.Mesh(mergeGeometries(list, false), m);
+        mesh.castShadow = true;
+        this.addMesh(mesh, chunk);
+      }
     }
     this.bag = new Bag();
-    this.facadeBags = new Map();
-    this.chainGeos = [];
+    this.facadeBags = new Bag();
+    this.chainGeos = new Bag();
+  }
+
+  /** 안개에 묻힌 먼 구역, 지하에선 지상(반대도) 덩어리를 끈다 */
+  cull(cam) {
+    const under = cam.z > UNDER_Z;
+    const r = under ? CULL.under : CULL.surface;
+    const r2 = r * r;
+    for (const c of this.cullables) {
+      const b = c.box;
+      const dx = Math.max(b.min.x - cam.x, 0, cam.x - b.max.x);
+      const dz = Math.max(b.min.z - cam.z, 0, cam.z - b.max.z);
+      c.mesh.visible = c.under === under && dx * dx + dz * dz < r2;
+    }
   }
 
   // ─── 바닥 ──────────────────────────────────────────────────────────────────
@@ -244,7 +293,9 @@ export class World {
         this.water(v);
         break;
       case 'skyline':
+        this.noCull = true;
         this.skyline();
+        this.noCull = false;
         break;
       case 'embank':
         this.box('concrete', v.x, -3, (v.z0 + v.z1) / 2, 0.6, 3.05, v.z1 - v.z0, { color: '#6a6c70' });
@@ -389,8 +440,7 @@ export class World {
     const uv = out.attributes.uv;
     const p = out.attributes.position;
     for (let i = 0; i < uv.count; i++) uv.setY(i, p.getY(i) / 24);
-    if (!this.facadeBags.has(style)) this.facadeBags.set(style, []);
-    this.facadeBags.get(style).push(out);
+    this.facadeBags.add(`${style}|${this.chunkOf(out)}`, out);
     if (v.roof) {
       this.box('roof', cx, v.h, cz, w + 0.3, 0.5, d + 0.3);
       if (v.h > 12 && R() < 0.6) this.box('metal', cx + (R() - 0.5) * w * 0.5, v.h + 0.5, cz + (R() - 0.5) * d * 0.5, 2.5, 2, 2.5, { color: '#6a6e72' });
@@ -406,7 +456,8 @@ export class World {
     const uv = g.attributes.uv;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (len / 1.2), uv.getY(i) * (v.h / 1.2));
     place(g, cx, v.h / 2, cz, rot);
-    this.chainGeos.push(colorize(g.toNonIndexed(), '#ffffff'));
+    const cg = colorize(g.toNonIndexed(), '#ffffff');
+    this.chainGeos.add(this.chunkOf(cg), cg);
     const n = Math.max(1, Math.round(len / 3));
     for (let i = 0; i <= n; i++) {
       const t = i / n;
@@ -888,7 +939,8 @@ export class World {
 
   buildLights() {
     const q = this.quality;
-    this.poolSize = q === 'low' ? 4 : q === 'high' ? 10 : 7;
+    // 진짜 조명은 화면 모든 점에서 계산되므로 몇 개만 (나머지는 빛 웅덩이·후광으로)
+    this.poolSize = q === 'low' ? 2 : q === 'high' ? 7 : 4;
     this.sources = [];
     for (const l of this.map.lamps) if (!l.broken) this.sources.push({ x: l.x, y: l.y, z: l.z, color: l.color, base: 55, range: 22, kind: 'lamp', decal: 7 });
     for (const l of this.map.lights) {
@@ -1130,6 +1182,7 @@ export class World {
   // ─── 매 프레임 ─────────────────────────────────────────────────────────────
 
   update(dt, t, cam) {
+    this.cull(cam);
     this.updateLights(dt, t, cam);
     this.updateFires(dt);
     for (const d of this.doors.values()) {

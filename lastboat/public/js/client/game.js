@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { buildMap, UNDERGROUND_Z } from '../shared/map.js';
 import { ColliderSet, F } from '../shared/geom.js';
 import { WEAPONS } from '../shared/weapons.js';
+import { Playout, bracket } from '../shared/playout.js';
 import { World } from './world.js';
 import { ZombieRenderer } from './zombies.js';
 import { Survivor } from './survivor.js';
@@ -13,6 +14,9 @@ import { Player } from './player.js';
 import * as audio from './audio.js';
 
 const SNAP_RATE = 30;
+// 해상도 배율 한계 (그래픽 설정별). 느리면 자동으로 이 아래까지 내린다.
+const PR_MAX = { low: 0.75, medium: 1, high: 1.5 };
+const PR_MIN = 0.5;
 
 export class Game {
   /**
@@ -28,7 +32,10 @@ export class Game {
     this.map = buildMap();
     this.cols = new ColliderSet(this.map.colliders);
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: this.quality !== 'low', powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.quality === 'high' ? 2 : this.quality === 'low' ? 0.85 : 1.25));
+    this.prMax = Math.min(window.devicePixelRatio || 1, PR_MAX[this.quality] || 1);
+    this.pr = this.prMax;
+    this.renderer.setPixelRatio(this.pr);
+    this.perf = { frames: 0, time: 0, fps: 0, good: 0, cool: 0, backoff: 8, lastDrop: -99, clock: 0 };
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
@@ -65,7 +72,11 @@ export class Game {
     const st = this.map.starts[this.slot] || this.map.starts[0];
     this.player.reset(st[0], st[1], this.map.startYaw);
     this.snaps = [];
-    this.off = null;
+    // 받은 스냅샷을 일정한 속도로 재생하는 시계 (방장은 같은 컴퓨터라 버퍼가 작다)
+    this.snapPlay = new Playout({ min: this.isHost ? 0.04 : 0.07, max: 0.45 });
+    // 방장 화면의 동료: 동료가 보낸 위치를 직접 버퍼에 쌓아 부드럽게
+    this.mateBuf = [];
+    this.matePlay = new Playout({ min: 0.06, max: 0.45 });
     this.zombieView = [];
     this.me = null;
     this.mate = null;
@@ -81,8 +92,17 @@ export class Game {
     this.heartT = 0;
     this.stateT = 0;
     this.seq = 0;
-    this.link.setHandlers({ snapshot: (s) => this.onSnapshot(s), events: (list) => this.onEvents(list) });
+    this.link.setHandlers({ snapshot: (s) => this.onSnapshot(s), events: (list) => this.onEvents(list), mate: (st, now) => this.onMateState(st, now) });
     this.resize();
+    // 셰이더를 미리 만들어 둔다 (처음 보는 물건·첫 총소리 때 멈칫하지 않게)
+    try {
+      this.renderer.compile(this.scene, this.camera);
+      this.renderer.compile(this.view.scene, this.view.camera);
+    } catch (err) {
+      console.warn(err);
+    }
+    this.perfEl = document.getElementById('perf');
+    this.perfOn = false;
     this.onResize = () => this.resize();
     window.addEventListener('resize', this.onResize);
     audio.unlock();
@@ -201,37 +221,43 @@ export class Game {
     const last = this.snaps[this.snaps.length - 1];
     if (last && (s.runId !== last.runId || s.tick < last.tick - 30)) {
       this.snaps = [];
-      this.off = null;
+      this.snapPlay.reset();
     } else if (last && s.tick <= last.tick) return;
-    const now = performance.now() / 1000;
-    const o = s.tick / SNAP_RATE - now;
-    if (this.off === null) this.off = o;
-    else if (o > this.off) this.off = o;
-    else this.off += (o - this.off) * 0.03;
+    s.t = s.tick / SNAP_RATE;
+    this.snapPlay.push(s.t, performance.now() / 1000);
     this.snaps.push(s);
-    if (this.snaps.length > 30) this.snaps.shift();
+    if (this.snaps.length > 40) this.snaps.shift();
     this.me = s.players[this.slot] || null;
     this.runTime = s.time;
     this.finaleLeft = s.finaleLeft;
     this.boatT = s.boatT;
   }
 
+  /** 방장: 동료가 보낸 위치 (동료 컴퓨터 시각 포함) */
+  onMateState(st, now) {
+    if (!st.time) return;
+    const t = st.time / 1000;
+    const buf = this.mateBuf;
+    const last = buf[buf.length - 1];
+    if (last && t <= last.t) {
+      if (t > last.t - 2) return; // 늦게 온 것
+      buf.length = 0; // 동료가 새로고침함
+      this.matePlay.reset();
+    }
+    this.matePlay.push(t, now);
+    buf.push({ t, x: st.x, z: st.z, yaw: st.yaw, pitch: st.pitch });
+    if (buf.length > 60) buf.shift();
+  }
+
   interpolate() {
     const snaps = this.snaps;
     if (!snaps.length) return;
-    const delay = this.isHost ? 1.6 / SNAP_RATE : 4 / SNAP_RATE;
-    const rt = performance.now() / 1000 + this.off - delay;
-    let a = snaps[0];
-    let b = null;
-    for (let i = snaps.length - 1; i >= 0; i--) {
-      if (snaps[i].tick / SNAP_RATE <= rt) {
-        a = snaps[i];
-        b = snaps[i + 1] || null;
-        break;
-      }
-    }
-    let k = 0;
-    if (b) k = Math.max(0, Math.min(1, (rt - a.tick / SNAP_RATE) / ((b.tick - a.tick) / SNAP_RATE)));
+    const now = performance.now() / 1000;
+    const pt = this.snapPlay.time(now);
+    const br = bracket(snaps, pt ?? snaps[snaps.length - 1].t, 0.07);
+    const { a, b } = br;
+    const k = b ? Math.max(0, br.k) : 0;
+    const kr = Math.min(1, k);
     const src = b || a;
     const amap = new Map(a.zombies.map((z) => [z.id, z]));
     const out = [];
@@ -243,8 +269,8 @@ export class Game {
       }
       const dy = Math.atan2(Math.sin(zb.yaw - za.yaw), Math.cos(zb.yaw - za.yaw));
       out.push({
-        id: zb.id, x: za.x + (zb.x - za.x) * k, z: za.z + (zb.z - za.z) * k, yaw: za.yaw + dy * k,
-        state: k < 0.5 && zb.state !== 4 ? za.state : zb.state, variant: zb.variant, speed: za.speed + (zb.speed - za.speed) * k,
+        id: zb.id, x: za.x + (zb.x - za.x) * k, z: za.z + (zb.z - za.z) * k, yaw: za.yaw + dy * kr,
+        state: k < 0.5 && zb.state !== 4 ? za.state : zb.state, variant: zb.variant, speed: za.speed + (zb.speed - za.speed) * kr,
         flags: k < 0.5 ? za.flags : zb.flags, scale: 0.93 + ((zb.variant * 13) % 10) / 70,
       });
     }
@@ -255,8 +281,24 @@ export class Game {
       const ma = a.players[1 - this.slot];
       if (ms && ma && b) {
         const dy = Math.atan2(Math.sin(ms.yaw - ma.yaw), Math.cos(ms.yaw - ma.yaw));
-        this.mate = { ...ms, x: ma.x + (ms.x - ma.x) * k, z: ma.z + (ms.z - ma.z) * k, yaw: ma.yaw + dy * k, pitch: ma.pitch + (ms.pitch - ma.pitch) * k };
-      } else this.mate = ms || null;
+        this.mate = { ...ms, x: ma.x + (ms.x - ma.x) * kr, z: ma.z + (ms.z - ma.z) * kr, yaw: ma.yaw + dy * kr, pitch: ma.pitch + (ms.pitch - ma.pitch) * kr };
+      } else this.mate = ms ? { ...ms } : null;
+      // 방장: 동료 위치는 동료가 직접 보낸 것을 재생 (시뮬레이션 틱에 맞춰 끊기지 않게)
+      if (this.isHost && this.mate && this.mateBuf.length && now - this.matePlay.lastArrive < 1) {
+        const r = bracket(this.mateBuf, this.matePlay.time(now), 0.1);
+        if (r) {
+          const m = this.mate;
+          if (r.b) {
+            const q = Math.max(0, r.k);
+            const q1 = Math.min(1, q);
+            const dy = Math.atan2(Math.sin(r.b.yaw - r.a.yaw), Math.cos(r.b.yaw - r.a.yaw));
+            m.x = r.a.x + (r.b.x - r.a.x) * q;
+            m.z = r.a.z + (r.b.z - r.a.z) * q;
+            m.yaw = r.a.yaw + dy * q1;
+            m.pitch = r.a.pitch + (r.b.pitch - r.a.pitch) * q1;
+          } else Object.assign(m, { x: r.a.x, z: r.a.z, yaw: r.a.yaw, pitch: r.a.pitch });
+        }
+      }
       if (this.mate && this.snaps.length) this.mate.revive = this.snaps[this.snaps.length - 1].players[1 - this.slot]?.revive || 0;
     }
   }
@@ -406,7 +448,7 @@ export class Game {
     const st = this.map.starts[this.slot] || this.map.starts[0];
     this.player.reset(st[0], st[1], this.map.startYaw);
     this.snaps = [];
-    this.off = null;
+    this.snapPlay.reset();
     this.fx.decals.count = 0;
     this.fx.decalN = 0;
     audio.alarm(false);
@@ -443,16 +485,18 @@ export class Game {
   frame(now) {
     if (!this.running) return;
     this.raf = requestAnimationFrame((t) => this.frame(t));
-    const dt = Math.min(0.05, Math.max(0.001, (now - this.last) / 1000));
+    const raw = (now - this.last) / 1000;
+    const dt = Math.min(0.05, Math.max(0.001, raw));
     this.last = now;
+    this.adaptResolution(raw);
     const t = now / 1000;
     const p = this.player;
     p.update(dt);
-    // 내 상태 보내기
+    // 내 상태 보내기: 방장은 매 프레임(같은 컴퓨터의 워커로), 동료는 초당 30번 고르게
     this.stateT -= dt;
-    if (this.stateT <= 0) {
-      this.stateT = this.isHost ? 1 / 40 : 1 / 20;
-      this.link.sendState({ slot: this.slot, x: p.x, z: p.z, yaw: p.yaw, pitch: p.pitch, flags: p.flags(), weapon: p.weaponId(), seq: this.seq++ });
+    if (this.isHost || this.stateT <= 0) {
+      this.stateT = this.isHost ? 0 : Math.max(-0.05, this.stateT) + 1 / 30;
+      this.link.sendState({ slot: this.slot, x: p.x, z: p.z, yaw: p.yaw, pitch: p.pitch, flags: p.flags(), weapon: p.weaponId(), seq: this.seq++, time: performance.now() });
     }
     this.interpolate();
     // 지하/지상 전환
@@ -488,6 +532,67 @@ export class Game {
     this.renderer.render(this.scene, this.camera);
     this.renderer.clearDepth();
     if (this.me?.status !== 2) this.renderer.render(this.view.scene, this.view.camera);
+    if (this.perfOn) this.updatePerf();
+  }
+
+  /**
+   * 프레임이 모자라면 해상도를 조금씩 내리고, 넉넉하면 다시 올린다.
+   * (그래픽 카드가 약한 컴퓨터에서 끊김 없이 돌게. 오르내림이 반복되면 올리는 간격을 늘린다)
+   */
+  adaptResolution(raw) {
+    const P = this.perf;
+    if (raw > 0 && raw < 2) P.show = P.show ? P.show * 0.95 + raw * 0.05 : raw; // 표시용
+    // 탭 전환·메뉴·한 번 멈칫한 것은 빼고 잰다 (느린 프레임이 계속되면 그건 센다)
+    P.slowRun = raw > 0.25 ? (P.slowRun || 0) + 1 : 0;
+    if (!(raw > 0) || raw > 2 || (raw > 0.25 && P.slowRun < 3) || !this.player.enabled) return;
+    P.frames++;
+    P.time += raw;
+    if (P.time < 1) return;
+    P.fps = P.frames / P.time;
+    P.clock += P.time;
+    P.frames = 0;
+    P.time = 0;
+    P.cool = Math.max(0, P.cool - 1);
+    let next = this.pr;
+    if (P.fps < 45 && this.pr > PR_MIN) {
+      next = Math.max(PR_MIN, this.pr * 0.85);
+      if (P.clock - P.lastDrop < 20) P.backoff = Math.min(120, P.backoff * 2);
+      P.lastDrop = P.clock;
+      P.cool = P.backoff;
+      P.good = 0;
+    } else if (P.fps > 56 && this.pr < this.prMax) {
+      P.good++;
+      if (P.good >= 4 && P.cool <= 0) {
+        next = Math.min(this.prMax, this.pr * 1.1);
+        P.good = 0;
+      }
+    } else P.good = 0;
+    if (Math.abs(next - this.pr) > 0.01) {
+      this.pr = next;
+      this.renderer.setPixelRatio(next);
+      this.resize();
+    }
+  }
+
+  togglePerf() {
+    this.perfOn = !this.perfOn;
+    this.perfEl?.classList.toggle('hidden', !this.perfOn);
+    if (this.perfOn) this.updatePerf(true);
+  }
+
+  updatePerf(force = false) {
+    const now = performance.now();
+    if (!force && now - (this.perfT || 0) < 500) return;
+    this.perfT = now;
+    const parts = [`FPS ${this.perf.show ? Math.round(1 / this.perf.show) : '-'}`, `해상도 ${Math.round((this.pr / (window.devicePixelRatio || 1)) * 100)}%`];
+    const st = this.link.stats?.();
+    if (st) {
+      parts.push(st.direct ? '직접 연결' : '서버 경유');
+      parts.push(st.rtt >= 0 ? `핑 ${Math.round(st.rtt)}ms` : '핑 -');
+      parts.push(`버퍼 ${Math.round(this.snapPlay.buffer() * 1000)}ms`);
+    }
+    parts.push(`좀비 ${this.zombieView.length}`);
+    if (this.perfEl) this.perfEl.textContent = parts.join(' · ');
   }
 
   ambientSounds(dt, cam) {

@@ -1,5 +1,7 @@
-// 온라인: 웹소켓(방·신호·사건 전달) + WebRTC 데이터 채널(위치·스냅샷을 서버 거치지 않고 직접).
-// 직접 연결이 안 되면 서버가 그대로 전달한다.
+// 온라인: 웹소켓(방·신호) + WebRTC 데이터 채널 두 개로 서버를 거치지 않고 직접 주고받는다.
+//  'g': 순서·재전송 없음 (위치·스냅샷·핑 — 늦게 온 건 버린다)
+//  'r': 순서·재전송 있음 (사건·요청 — 문 열기, 명중 같은 건 꼭 도착해야 한다)
+// 직접 연결이 안 되면 서버(웹소켓)가 그대로 전달한다.
 const ICE = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 
 export class Net {
@@ -74,12 +76,38 @@ export class Net {
   /** 빠른 길(직접 연결)이 있으면 그걸로, 없으면 서버로 */
   sendFast(buf) {
     const p = this.peer;
-    if (p && p.open && p.dc && p.dc.readyState === 'open' && p.dc.bufferedAmount < 128 * 1024) p.dc.send(buf);
+    if (this.peerOk() && p.open && p.dc && p.dc.readyState === 'open' && p.dc.bufferedAmount < 128 * 1024) p.dc.send(buf);
     else this.sendBin(buf);
   }
 
+  /** 직접 연결이 살아 있나 (끊기는 중이면 채널이 한동안 'open' 으로 남아 있어서 따로 본다) */
+  peerOk() {
+    const p = this.peer;
+    if (!p) return false;
+    const s = p.pc.iceConnectionState;
+    return s === 'connected' || s === 'completed';
+  }
+
+  /** 상대에게 JSON (사건·요청). 직접 연결이 있으면 그걸로, 없으면 서버로 */
+  sendTo(data) {
+    const r = this.peer && this.peer.rel;
+    if (this.peerOk() && r && r.readyState === 'open' && r.bufferedAmount < 1024 * 1024) {
+      r.send(JSON.stringify(data));
+      return true;
+    }
+    return this.send({ t: 'to', data });
+  }
+
   direct() {
-    return !!(this.peer && this.peer.open);
+    return !!(this.peer && this.peer.open && this.peerOk());
+  }
+
+  relOpen(ch) {
+    ch.onmessage = (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+      this.handlers.from?.({ t: 'from', data });
+    };
   }
 
   close() {
@@ -91,7 +119,7 @@ export class Net {
 
   closePeer() {
     if (this.peer) {
-      try { this.peer.dc?.close(); this.peer.pc.close(); } catch { /* 무시 */ }
+      try { this.peer.dc?.close(); this.peer.rel?.close(); this.peer.pc.close(); } catch { /* 무시 */ }
     }
     this.peer = null;
   }
@@ -103,7 +131,9 @@ export class Net {
     const pc = new RTCPeerConnection({ iceServers: ICE });
     const dc = pc.createDataChannel('g', { ordered: false, maxRetransmits: 0 });
     dc.binaryType = 'arraybuffer';
-    const peer = { pc, dc, open: false, pending: [] };
+    const rel = pc.createDataChannel('r', { ordered: true });
+    this.relOpen(rel);
+    const peer = { pc, dc, rel, open: false, pending: [] };
     this.peer = peer;
     dc.onopen = () => { peer.open = true; };
     dc.onclose = () => { peer.open = false; };
@@ -118,9 +148,14 @@ export class Net {
       if (data.sdp && data.sdp.type === 'offer') {
         this.closePeer();
         const pc = new RTCPeerConnection({ iceServers: ICE });
-        const peer = { pc, dc: null, open: false, pending: [] };
+        const peer = { pc, dc: null, rel: null, open: false, pending: [] };
         this.peer = peer;
         pc.ondatachannel = (e) => {
+          if (e.channel.label === 'r') {
+            peer.rel = e.channel;
+            this.relOpen(e.channel);
+            return;
+          }
           const dc = e.channel;
           dc.binaryType = 'arraybuffer';
           peer.dc = dc;

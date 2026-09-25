@@ -1,6 +1,6 @@
 // 네트워크용 이진 형식.
-//  방장 → 동료: 스냅샷 (사람 2명 + 좀비 전부), 동료 → 방장: 내 캐릭터 상태
-export const MSG = { SNAP: 1, PSTATE: 2 };
+//  방장 → 동료: 스냅샷 (사람 2명 + 좀비 전부), 동료 → 방장: 내 캐릭터 상태, 양쪽: 핑
+export const MSG = { SNAP: 1, PSTATE: 2, PING: 3, PONG: 4 };
 const POS = 50; // 2cm 단위
 const i16 = (v) => Math.max(-32767, Math.min(32767, Math.round(v)));
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -102,9 +102,9 @@ export function decodeSnapshot(buf) {
   return { tick, runId, time, finaleLeft, boatT, players, zombies };
 }
 
-/** 내 캐릭터 상태 (위치·시선·손전등·무기) */
+/** 내 캐릭터 상태 (위치·시선·손전등·무기) + 보낸 시각(ms, 받는 쪽 지터 버퍼용) */
 export function encodePlayerState(st) {
-  const buf = new ArrayBuffer(13);
+  const buf = new ArrayBuffer(17);
   const v = new DataView(buf);
   v.setUint8(0, MSG.PSTATE);
   v.setUint8(1, st.slot);
@@ -115,6 +115,7 @@ export function encodePlayerState(st) {
   v.setUint8(9, st.flags & 255);
   v.setUint8(10, st.weapon & 255);
   v.setUint16(11, st.seq & 0xffff, true);
+  v.setUint32(13, Math.floor(st.time || 0) >>> 0, true);
   return buf;
 }
 
@@ -129,7 +130,27 @@ export function decodePlayerState(buf) {
     flags: v.getUint8(9),
     weapon: v.getUint8(10),
     seq: v.getUint16(11, true),
+    time: buf.byteLength >= 17 ? v.getUint32(13, true) : 0,
   };
+}
+
+/** 핑: [종류][보낸 시각 ms(float64)] — 받은 쪽은 종류만 PONG 으로 바꿔 돌려준다 */
+export function encodePing(ms) {
+  const buf = new ArrayBuffer(9);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.PING);
+  v.setFloat64(1, ms, true);
+  return buf;
+}
+
+export function pongOf(buf) {
+  const out = buf.slice(0);
+  new Uint8Array(out)[0] = MSG.PONG;
+  return out;
+}
+
+export function pingTime(buf) {
+  return new DataView(buf).getFloat64(1, true);
 }
 
 /** 플레이어 상태 플래그 */

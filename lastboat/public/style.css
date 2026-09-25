@@ -152,6 +152,7 @@ input:focus { border-color: #5a7ab8; }
 #note-view pre { white-space: pre-wrap; font-family: 'Nanum Pen Script', var(--ui); font-size: 16px; line-height: 1.7; margin: 0 0 14px; }
 #note-view .btn { color: #222; border-color: rgba(0,0,0,0.3); }
 #end-screen { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); pointer-events: auto; }
+#perf { position: absolute; left: 10px; top: 8px; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; color: #cfe3ff; background: rgba(0,0,0,0.55); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
 .end { text-align: center; padding: 28px; }
 .end h2 { font-size: 64px; margin: 0 0 8px; letter-spacing: .15em; }
 .end.wipe h2 { color: #d8302a; }

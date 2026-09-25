@@ -6,7 +6,7 @@ import { NavGrid } from '../public/js/shared/nav.js';
 import { reachable, distTo } from '../public/js/shared/route.js';
 import { Sim, DT, PS, ZS, FINALE_TIME } from '../public/js/shared/sim.js';
 import { REVIVE_TIME } from '../public/js/shared/weapons.js';
-import { encodeSnapshot, decodeSnapshot, encodePlayerState, decodePlayerState } from '../public/js/shared/protocol.js';
+import { MSG, encodeSnapshot, decodeSnapshot, encodePlayerState, decodePlayerState, encodePing, pongOf, pingTime } from '../public/js/shared/protocol.js';
 
 const steps = (sim, sec) => { for (let i = 0; i < Math.round(sec / DT); i++) sim.step(); };
 const place = (sim, slot, x, z) => { const p = sim.players[slot]; p.x = x; p.z = z; p.region = z > 380 ? 1 : 0; };
@@ -176,10 +176,16 @@ test('스냅샷·플레이어 상태 이진 형식', () => {
   assert.equal(s.zombies[0].variant, 17);
   assert.equal(s.zombies[0].state, 2);
   assert.ok(Math.abs(s.zombies[0].yaw + 1) < 0.03);
-  const ps = decodePlayerState(encodePlayerState({ slot: 1, x: 10.5, z: 420.25, yaw: -3, pitch: 0.7, flags: 9, weapon: 1, seq: 70000 }));
+  const ps = decodePlayerState(encodePlayerState({ slot: 1, x: 10.5, z: 420.25, yaw: -3, pitch: 0.7, flags: 9, weapon: 1, seq: 70000, time: 123456789.7 }));
   assert.equal(ps.slot, 1);
   assert.ok(Math.abs(ps.z - 420.25) < 0.02);
   assert.equal(ps.seq, 70000 & 0xffff);
+  assert.equal(ps.time, 123456789);
+  const ping = encodePing(4321.5);
+  assert.equal(new Uint8Array(ping)[0], MSG.PING);
+  const pong = pongOf(ping);
+  assert.equal(new Uint8Array(pong)[0], MSG.PONG);
+  assert.equal(pingTime(pong), 4321.5);
 });
 
 test('좀비 80마리 근처에서도 한 틱이 가볍다', () => {

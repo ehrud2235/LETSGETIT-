@@ -146,6 +146,7 @@ export class Player {
         play('ui');
         break;
       case 'KeyV': this.shove(); break;
+      case 'KeyP': this.game.togglePerf(); break;
       case 'KeyE': this.use(); break;
       default:
     }

@@ -1,7 +1,7 @@
 // 화면 흐름: 타이틀 → (혼자 / 방 만들기 / 참가) → 대기실 → 게임 → 메뉴·끝.
 import { Game } from './game.js';
 import { Net } from './net.js';
-import { MSG, decodeSnapshot, encodePlayerState, decodePlayerState } from '../shared/protocol.js';
+import { MSG, decodeSnapshot, encodePlayerState, decodePlayerState, encodePing, pongOf, pingTime } from '../shared/protocol.js';
 import { DIFFICULTY } from '../shared/sim.js';
 import * as audio from './audio.js';
 
@@ -62,6 +62,7 @@ function helpHtml() {
   <tr><td>줍기·열기·읽기</td><td>E (동료 일으키기는 E 꾹)</td></tr>
   <tr><td>손전등</td><td>F</td></tr>
   <tr><td>목표·상태 보기</td><td>Tab (꾹)</td></tr>
+  <tr><td>성능·연결 정보</td><td>P</td></tr>
   <tr><td>메뉴</td><td>Esc</td></tr></table>
   <ul class="tips">
     <li>길 안내는 없습니다. 표지판·게시판·쪽지·멀리 보이는 불빛을 보고 항구로 가는 길을 찾으세요.</li>
@@ -99,19 +100,38 @@ function openSettings() {
 
 // ─── 방장 쪽: 워커 연결 ──────────────────────────────────────────────────────
 
+/** 양쪽 공통: 1초마다 핑을 보내 왕복 시간을 잰다 (직접 연결이면 그 길로, 아니면 서버 경유) */
+function pinger(net) {
+  const st = { rtt: -1 };
+  const timer = setInterval(() => net.sendFast(encodePing(performance.now())), 1000);
+  return {
+    st,
+    handle(u, data) {
+      if (u === MSG.PING) net.sendFast(pongOf(data));
+      else if (u === MSG.PONG) st.rtt = st.rtt < 0 ? performance.now() - pingTime(data) : st.rtt * 0.7 + (performance.now() - pingTime(data)) * 0.3;
+      else return false;
+      return true;
+    },
+    stats: () => ({ direct: net.direct(), rtt: st.rtt }),
+    stop: () => clearInterval(timer),
+  };
+}
+
 function hostLink(net) {
   const worker = new Worker(new URL('../sim/worker.js', import.meta.url), { type: 'module' });
   S.worker = worker;
-  let handlers = { snapshot() {}, events() {} };
+  let handlers = { snapshot() {}, events() {}, mate() {} };
+  const ping = net ? pinger(net) : null;
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'snap') {
       const s = decodeSnapshot(m.buf);
       handlers.snapshot(s);
-      if (net && m.tick % 2 === 0) net.sendFast(m.buf);
+      // 직접 연결이면 매 틱(30Hz), 서버 경유면 두 틱마다
+      if (net && (m.tick % 2 === 0 || net.direct())) net.sendFast(m.buf);
     } else if (m.type === 'ev') {
       handlers.events(m.list);
-      if (net) net.send({ t: 'to', data: { ev: m.list } });
+      if (net) net.sendTo({ ev: m.list });
     } else if (m.type === 'error') {
       console.error(m.message);
       toast('시뮬레이션 오류가 났어요');
@@ -123,8 +143,11 @@ function hostLink(net) {
       const u = new Uint8Array(data, 0, 1)[0];
       if (u === MSG.PSTATE) {
         const st = decodePlayerState(data);
-        if (st.slot === 1) worker.postMessage({ type: 'pstate', slot: 1, st });
-      }
+        if (st.slot === 1) {
+          worker.postMessage({ type: 'pstate', slot: 1, st });
+          handlers.mate(st, performance.now() / 1000);
+        }
+      } else ping.handle(u, data);
     });
     net.on('from', (m) => {
       const d = m.data || {};
@@ -135,24 +158,30 @@ function hostLink(net) {
     worker,
     request(req) { worker.postMessage({ type: 'req', slot: 0, req }); },
     sendState(st) { worker.postMessage({ type: 'pstate', slot: 0, st }); },
-    setHandlers(h) { handlers = h; },
+    setHandlers(h) { handlers = { ...handlers, ...h }; },
+    stats: () => (ping ? ping.stats() : null),
+    dispose() { ping?.stop(); },
   };
 }
 
 function guestLink(net) {
   let handlers = { snapshot() {}, events() {} };
+  const ping = pinger(net);
   net.onBinary((data) => {
     const u = new Uint8Array(data, 0, 1)[0];
     if (u === MSG.SNAP) handlers.snapshot(decodeSnapshot(data));
+    else ping.handle(u, data);
   });
   net.on('from', (m) => {
     const d = m.data || {};
     if (d.ev) handlers.events(d.ev);
   });
   return {
-    request(req) { net.send({ t: 'to', data: { req } }); },
+    request(req) { net.sendTo({ req }); },
     sendState(st) { net.sendFast(encodePlayerState(st)); },
-    setHandlers(h) { handlers = h; },
+    setHandlers(h) { handlers = { ...handlers, ...h }; },
+    stats: ping.stats,
+    dispose() { ping.stop(); },
   };
 }
 
@@ -196,6 +225,8 @@ function exitGame() {
     S.game.dispose();
     S.game = null;
   }
+  S.link?.dispose?.();
+  S.link = null;
   if (S.worker) {
     S.worker.postMessage({ type: 'stop' });
     S.worker.terminate();
@@ -305,6 +336,8 @@ function bindNet(net) {
     toast(m.online ? `${m.name} 님이 들어왔어요` : `${m.name} 님의 연결이 끊겼어요`);
     if (S.game && S.room?.you === 'host' && S.worker) {
       S.worker.postMessage({ type: 'conn', slot: 1, on: m.online, name: m.name });
+      // 끊긴 쪽 직접 연결은 버리고, 돌아오면 새로 잇는다 (그 사이 사건은 서버로 → 돌아오면 전체 상태를 다시 보냄)
+      S.net?.closePeer();
       if (m.online) {
         S.worker.postMessage({ type: 'resync' });
         setTimeout(() => S.net?.rtcStart(), 400);
