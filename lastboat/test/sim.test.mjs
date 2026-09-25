@@ -176,11 +176,12 @@ test('스냅샷·플레이어 상태 이진 형식', () => {
   assert.equal(s.zombies[0].variant, 17);
   assert.equal(s.zombies[0].state, 2);
   assert.ok(Math.abs(s.zombies[0].yaw + 1) < 0.03);
-  const ps = decodePlayerState(encodePlayerState({ slot: 1, x: 10.5, z: 420.25, yaw: -3, pitch: 0.7, flags: 9, weapon: 1, seq: 70000, time: 123456789.7 }));
+  const ps = decodePlayerState(encodePlayerState({ slot: 1, x: 10.5, z: 420.25, yaw: -3, pitch: 0.7, flags: 9, weapon: 1, seq: 70000, time: 123456789.7, inst: 4242 }));
   assert.equal(ps.slot, 1);
   assert.ok(Math.abs(ps.z - 420.25) < 0.02);
   assert.equal(ps.seq, 70000 & 0xffff);
   assert.equal(ps.time, 123456789);
+  assert.equal(ps.inst, 4242);
   const ping = encodePing(4321.5);
   assert.equal(new Uint8Array(ping)[0], MSG.PING);
   const pong = pongOf(ping);

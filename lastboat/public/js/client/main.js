@@ -122,6 +122,8 @@ function hostLink(net) {
   S.worker = worker;
   let handlers = { snapshot() {}, events() {}, mate() {} };
   const ping = net ? pinger(net) : null;
+  let guestInst = 0;
+  const oldInst = new Set();
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'snap') {
@@ -144,6 +146,14 @@ function hostLink(net) {
       if (u === MSG.PSTATE) {
         const st = decodePlayerState(data);
         if (st.slot === 1) {
+          // 동료 화면이 둘(옛 탭 등)이어도 가장 새 화면의 위치만 쓴다
+          if (st.inst) {
+            if (oldInst.has(st.inst)) return;
+            if (st.inst !== guestInst) {
+              if (guestInst) oldInst.add(guestInst);
+              guestInst = st.inst;
+            }
+          }
           worker.postMessage({ type: 'pstate', slot: 1, st });
           handlers.mate(st, performance.now() / 1000);
         }
@@ -188,10 +198,16 @@ function guestLink(net) {
 // ─── 게임 시작·끝 ────────────────────────────────────────────────────────────
 
 function startGame({ solo, isHost, names, difficulty, seed }) {
+  // 서버는 출발할 때 'start' 와 '게임 중' 대기실 소식을 연달아 보낸다.
+  // 게임은 한 번만 만든다 (두 번 만들면 보이지 않는 두 번째 내가 출발점에 서서 위치를 계속 보낸다)
+  if (S.game || S.starting) return;
+  S.starting = true;
   closeModal();
   loading(true, '도시를 만드는 중…');
   audio.unlock();
   setTimeout(() => {
+    S.starting = false;
+    if (S.game) return;
     try {
       const net = solo ? null : S.net;
       const link = isHost ? hostLink(net) : guestLink(net);
@@ -304,7 +320,7 @@ function bindNet(net) {
     S.room = m.room;
     loading(false);
     if (m.notice) toast(m.notice);
-    if (S.game) {
+    if (S.game || S.starting) {
       if (m.room.phase === 'lobby' && S.room.you === 'guest' && S.game) {
         toast('방장이 게임을 끝냈어요');
         exitGame();

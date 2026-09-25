@@ -134,6 +134,158 @@ function noise(dest, { at = 0, dur = 0.2, vol = 0.3, type = 'lowpass', freq = 10
   s.stop(t + attack + dur + 0.05);
 }
 
+// ─── 좀비 목소리 합성 ────────────────────────────────────────────────────────
+// 성대(톱니파 + 떨림) + 숨소리(잡음) → 목 긁는 소리(찌그러뜨림) → 모음 공명(포먼트 셋)
+// 좀비는 목이 굵고 상한 느낌으로 공명을 조금 낮춘다.
+const VOW = {
+  u: [300, 870, 2240], o: [480, 820, 2400], uh: [640, 1190, 2390], a: [730, 1090, 2440],
+  ae: [660, 1720, 2410], er: [490, 1350, 1690], eh: [530, 1840, 2480],
+};
+const raspCurves = new Map();
+function raspCurve(amount) {
+  const key = Math.round(amount * 10);
+  if (raspCurves.has(key)) return raspCurves.get(key);
+  const k = key * 6;
+  const c = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) {
+    const x = (i / 1023) * 2 - 1;
+    c[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
+  }
+  raspCurves.set(key, c);
+  return c;
+}
+let voicesBusy = 0;
+/** 지금 나고 있는 좀비 목소리 수 (너무 겹치지 않게) */
+export const voices = () => voicesBusy;
+
+/**
+ * v: { at, dur, pitch: [[비율, Hz], ...], vowels: ['u', 'a', ...], fry, fryHz, breath, rasp, vol, attack, jitter, tract }
+ */
+function voice(o, v) {
+  const t = ctx.currentTime + (v.at || 0);
+  const dur = v.dur;
+  const end = t + dur + 0.1;
+  const src = ctx.createOscillator();
+  src.type = 'sawtooth';
+  const P = v.pitch;
+  src.frequency.setValueAtTime(P[0][1], t);
+  for (const [k, f] of P.slice(1)) src.frequency.linearRampToValueAtTime(f, t + k * dur);
+  // 불안정한 음높이
+  const vib = ctx.createOscillator();
+  vib.type = 'triangle';
+  vib.frequency.value = 3 + Math.random() * 6;
+  const vg = ctx.createGain();
+  vg.gain.value = P[0][1] * (v.jitter ?? 0.07);
+  vib.connect(vg).connect(src.frequency);
+  // 갈라지는 목소리 (진폭을 빠르게 흔든다)
+  const fry = v.fry ?? 0.5;
+  const am = ctx.createGain();
+  am.gain.value = 1 - fry * 0.5;
+  const fl = ctx.createOscillator();
+  fl.type = 'square';
+  fl.frequency.value = v.fryHz ?? 20 + Math.random() * 20;
+  const fg = ctx.createGain();
+  fg.gain.value = fry * 0.5;
+  fl.connect(fg).connect(am.gain);
+  src.connect(am);
+  // 숨소리
+  const nb = ctx.createBufferSource();
+  nb.buffer = noiseBuf;
+  nb.loop = true;
+  const nf = ctx.createBiquadFilter();
+  nf.type = 'highpass';
+  nf.frequency.value = 350;
+  const ng = ctx.createGain();
+  ng.gain.value = v.breath ?? 0.3;
+  nb.connect(nf).connect(ng);
+  // 긁는 소리
+  const rasp = v.rasp ?? 0.5;
+  const pre = ctx.createGain();
+  pre.gain.value = 0.6 + rasp * 2.5;
+  const sh = ctx.createWaveShaper();
+  sh.curve = raspCurve(rasp);
+  am.connect(pre);
+  ng.connect(pre);
+  pre.connect(sh);
+  // 모음 공명
+  const g = ctx.createGain();
+  const tract = v.tract ?? 0.85;
+  const vw = v.vowels.map((n) => VOW[n] || VOW.uh);
+  [[1.6, 6], [0.9, 8], [0.35, 10]].forEach(([gain, q], i) => {
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = q;
+    bp.frequency.setValueAtTime(vw[0][i] * tract, t);
+    vw.slice(1).forEach((f, j) => bp.frequency.linearRampToValueAtTime(f[i] * tract, t + ((j + 1) / (vw.length - 1)) * dur));
+    const fgain = ctx.createGain();
+    fgain.gain.value = gain;
+    sh.connect(bp).connect(fgain).connect(g);
+  });
+  // 소리 크기: 올라왔다가 조금 줄고, 끝에 잦아든다
+  const vol = (v.vol ?? 0.5) * 0.65; // 총소리보다는 작게
+  const a = v.attack ?? 0.08;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + a);
+  g.gain.linearRampToValueAtTime(vol * 0.75, t + dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  g.connect(o);
+  for (const n of [src, vib, fl]) {
+    n.start(t);
+    n.stop(end);
+  }
+  nb.start(t, Math.random() * 1.5);
+  nb.stop(end);
+  voicesBusy++;
+  setTimeout(() => { voicesBusy = Math.max(0, voicesBusy - 1); }, ((v.at || 0) + dur) * 1000 + 100);
+}
+
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+/** 멀리서 들리는 좀비 떼: 여러 목소리 + 발소리 웅웅 */
+function horde(o) {
+  for (let i = 0; i < 9; i++) {
+    const at = rnd(0, 2.2);
+    const kind = Math.random();
+    if (kind < 0.45) ZV.moan(o, at, 0.45);
+    else if (kind < 0.8) ZV.snarl(o, at, 0.4);
+    else ZV.shriek(o, at, 0.35);
+  }
+  for (let i = 0; i < 5; i++) noise(o, { at: i * 0.5, dur: 1.4, vol: 0.12, type: 'lowpass', freq: 220, attack: 0.4 });
+}
+
+// 좀비 목소리 종류 (at: 몇 초 뒤, k: 크기)
+const ZV = {
+  // 어슬렁거릴 때: 낮고 긴 "으어어어…"
+  moan: (o, at = 0, k = 1) => {
+    const f = rnd(55, 85);
+    voice(o, { at, dur: rnd(1.3, 2.4), pitch: [[0, f], [0.3, f * rnd(1.05, 1.25)], [1, f * rnd(0.7, 0.85)]], vowels: pick([['u', 'uh', 'a', 'o'], ['o', 'a', 'uh'], ['er', 'uh', 'u']]), fry: 0.65, breath: 0.25, rasp: 0.4, vol: 0.55 * k, attack: 0.25 });
+  },
+  // 쫓아올 때: 거친 "크르아악", 가끔 두 번
+  snarl: (o, at = 0, k = 1) => {
+    const f = rnd(100, 150);
+    const dur = rnd(0.4, 0.75);
+    voice(o, { at, dur, pitch: [[0, f * 0.8], [0.25, f * 1.2], [1, f * 0.7]], vowels: pick([['er', 'a', 'uh'], ['uh', 'ae', 'a'], ['er', 'a']]), fry: 0.85, fryHz: rnd(28, 45), breath: 0.55, rasp: 0.9, vol: 0.6 * k, attack: 0.03, jitter: 0.14 });
+    if (Math.random() < 0.4) voice(o, { at: at + dur + rnd(0.05, 0.15), dur: rnd(0.25, 0.4), pitch: [[0, f], [1, f * 0.6]], vowels: ['a', 'uh'], fry: 0.9, breath: 0.6, rasp: 0.9, vol: 0.5 * k, attack: 0.02, jitter: 0.15 });
+  },
+  // 알아챘을 때: 찢어지는 비명
+  shriek: (o, at = 0, k = 1) => {
+    const f = rnd(210, 280);
+    voice(o, { at, dur: rnd(0.75, 1.1), pitch: [[0, f], [0.25, f * rnd(1.6, 1.9)], [1, f * 1.1]], vowels: ['a', 'ae', 'eh', 'a'], fry: 0.45, breath: 0.6, rasp: 1, vol: 0.55 * k, attack: 0.04, jitter: 0.1, tract: 1 });
+  },
+  // 총 맞았을 때: 짧은 "윽"
+  pain: (o, at = 0, k = 1) => {
+    const f = rnd(110, 150);
+    voice(o, { at, dur: rnd(0.16, 0.26), pitch: [[0, f], [1, f * 0.65]], vowels: ['uh', 'u'], fry: 0.7, breath: 0.4, rasp: 0.8, vol: 0.55 * k, attack: 0.01 });
+  },
+  // 죽을 때: 꾸르륵 가라앉는 소리
+  death: (o, at = 0, k = 1) => {
+    const f = rnd(80, 100);
+    voice(o, { at, dur: rnd(0.9, 1.3), pitch: [[0, f], [0.3, f * 0.9], [1, f * 0.45]], vowels: ['o', 'u', 'u'], fry: 1, fryHz: rnd(11, 16), breath: 0.5, rasp: 0.6, vol: 0.5 * k, attack: 0.03 });
+    noise(o, { at: at + 0.2, dur: 0.6, vol: 0.12 * k, type: 'lowpass', freq: 380, q: 4 });
+  },
+};
+
 const S = {
   pistol: (o) => {
     noise(o, { dur: 0.12, vol: 0.9, type: 'lowpass', freq: 4200, sweep: 600 });
@@ -158,39 +310,31 @@ const S = {
   shove: (o) => { noise(o, { dur: 0.15, vol: 0.2, type: 'bandpass', freq: 500, q: 0.8, sweep: 1500 }); },
   thud: (o) => { noise(o, { dur: 0.1, vol: 0.5, type: 'lowpass', freq: 500 }); tone(o, 80, { dur: 0.1, vol: 0.4, slide: 50 }); },
   flesh: (o) => { noise(o, { dur: 0.07, vol: 0.4, type: 'lowpass', freq: 900 }); noise(o, { dur: 0.05, vol: 0.2, type: 'bandpass', freq: 300, q: 2 }); },
-  groan: (o) => {
-    const base = 70 + Math.random() * 60;
-    const dur = 0.8 + Math.random() * 0.9;
-    const t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(base, t);
-    osc.frequency.linearRampToValueAtTime(base * (0.75 + Math.random() * 0.5), t + dur);
-    const lfo = ctx.createOscillator();
-    lfo.frequency.value = 5 + Math.random() * 5;
-    const lg = ctx.createGain();
-    lg.gain.value = base * 0.08;
-    lfo.connect(lg).connect(osc.frequency);
-    const f = ctx.createBiquadFilter();
-    f.type = 'bandpass';
-    f.frequency.setValueAtTime(400 + Math.random() * 300, t);
-    f.frequency.linearRampToValueAtTime(250 + Math.random() * 200, t + dur);
-    f.Q.value = 3;
-    const g = ctx.createGain();
-    env(g, t, 0.15, dur, 0.35);
-    osc.connect(f).connect(g).connect(o);
-    osc.start(t);
-    lfo.start(t);
-    osc.stop(t + dur + 0.3);
-    lfo.stop(t + dur + 0.3);
-    noise(o, { dur: dur * 0.8, vol: 0.08, type: 'bandpass', freq: 900, q: 2, attack: 0.1 });
+  moan: (o) => ZV.moan(o),
+  snarl: (o) => ZV.snarl(o),
+  shriek: (o) => ZV.shriek(o),
+  pain: (o) => ZV.pain(o),
+  death: (o) => ZV.death(o),
+  // 좀비가 물 때: 휘두르는 소리 + 살 + 으르렁
+  bite: (o) => {
+    noise(o, { dur: 0.12, vol: 0.3, type: 'bandpass', freq: 700, q: 1, sweep: 1600 });
+    noise(o, { at: 0.08, dur: 0.1, vol: 0.45, type: 'lowpass', freq: 900 });
+    ZV.snarl(o, 0.02, 0.8);
   },
-  scream: (o) => {
-    tone(o, 320 + Math.random() * 120, { dur: 0.6, vol: 0.3, type: 'sawtooth', slide: 520 + Math.random() * 200, attack: 0.05 });
-    noise(o, { dur: 0.6, vol: 0.35, type: 'bandpass', freq: 900, q: 1.5, sweep: 2200, attack: 0.05 });
+  // 좀비가 문을 두드린다: 묵직한 쿵 + 덜컹
+  bang: (o) => {
+    for (const at of [0, rnd(0.12, 0.3)]) {
+      noise(o, { at, dur: 0.16, vol: 0.9, type: 'lowpass', freq: 260 });
+      tone(o, rnd(55, 70), { at, dur: 0.14, vol: 0.6, slide: 38 });
+      noise(o, { at: at + 0.01, dur: 0.12, vol: 0.25, type: 'bandpass', freq: rnd(900, 1500), q: 3 });
+    }
   },
-  attack: (o) => { noise(o, { dur: 0.12, vol: 0.25, type: 'bandpass', freq: 700, q: 1, sweep: 1500 }); },
-  die: (o) => { noise(o, { dur: 0.5, vol: 0.3, type: 'lowpass', freq: 500, sweep: 150 }); tone(o, 110, { dur: 0.4, vol: 0.2, type: 'sawtooth', slide: 60 }); },
+  // 뛰어오는 좀비 발소리
+  zstep: (o) => {
+    noise(o, { dur: 0.06, vol: 1.1, type: 'lowpass', freq: rnd(420, 600) });
+    tone(o, rnd(60, 75), { dur: 0.06, vol: 0.3, slide: 42 });
+  },
+  horde,
   hurt: (o) => { noise(o, { dur: 0.12, vol: 0.6, type: 'lowpass', freq: 600 }); tone(o, 140, { dur: 0.18, vol: 0.3, type: 'triangle', slide: 90 }); },
   heart: (o) => { tone(o, 55, { dur: 0.1, vol: 0.5, slide: 40 }); tone(o, 50, { at: 0.18, dur: 0.1, vol: 0.4, slide: 38 }); },
   step: (o) => noise(o, { dur: 0.05, vol: 0.12, type: 'lowpass', freq: 380 }),

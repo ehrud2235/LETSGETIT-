@@ -88,6 +88,10 @@ export class Game {
     this.boatT = -1;
     this.region = 0;
     this.groanT = 0;
+    this.zNext = new Map(); // 좀비마다 다음에 소리 낼 시각
+    this.zStep = new Map();
+    this.alertT = 0;
+    this.inst = 1 + Math.floor(Math.random() * 65534); // 이 게임 화면의 번호 (방장이 옛 화면의 위치를 무시하게)
     this.distantT = 15;
     this.heartT = 0;
     this.stateT = 0;
@@ -349,16 +353,35 @@ export class Game {
         if (d) audio.play(d.kind === 'shutter' ? 'shutter' : d.kind === 'gate' ? 'gate' : 'door', { pos: [d.x, 1.5, d.z] });
         break;
       }
-      case 'zhit':
+      case 'zhit': {
         if (!mine) this.fx.blood(ev.x, ev.y, ev.z, ev.head ? 12 : 6, null, ev.head);
+        const now = performance.now() / 1000;
+        if ((this.zNext.get(-ev.id) || 0) < now && Math.random() < 0.6 && audio.voices() < 6) {
+          this.zNext.set(-ev.id, now + 0.8);
+          audio.play('pain', { pos: [ev.x, 1.5, ev.z], vol: 0.9 });
+        }
         break;
+      }
       case 'zdie':
         this.fx.bloodDecal(ev.x, ev.z, ev.head ? 1.4 : 1);
-        audio.play('die', { pos: [ev.x, 1, ev.z], vol: 0.8 });
+        audio.play('flesh', { pos: [ev.x, 1, ev.z], vol: 0.8 });
+        if (audio.voices() < 7) audio.play('death', { pos: [ev.x, 1, ev.z], vol: 0.9 });
+        this.zNext.delete(ev.id);
+        this.zNext.delete(-ev.id);
         if (mine) this.kills += 1;
         break;
-      case 'zalert':
-        audio.play('scream', { pos: [ev.x, 1.6, ev.z], reverb: 0.5 });
+      case 'zalert': {
+        // 여러 마리가 한꺼번에 알아채도 비명은 조금씩만
+        const now = performance.now() / 1000;
+        if (now > this.alertT) {
+          this.alertT = now + 0.5;
+          audio.play('shriek', { pos: [ev.x, 1.6, ev.z], reverb: this.region ? 0.8 : 0.5 });
+        }
+        this.zNext.set(ev.id, now + 1 + Math.random());
+        break;
+      }
+      case 'bash':
+        audio.play('bang', { pos: [ev.x, 1.2, ev.z], reverb: 0.4 });
         break;
       case 'pdmg':
         if (mine) {
@@ -369,6 +392,7 @@ export class Game {
           }
           this.hud.hurt(ev.amount, ang);
           audio.play('hurt');
+          if (ev.from) audio.play('bite', { pos: [ev.from[0], 1.5, ev.from[1]], vol: 0.9 });
         } else if (this.mate) audio.play('thud', { pos: [this.mate.x, 1.2, this.mate.z], vol: 0.6 });
         break;
       case 'down':
@@ -402,8 +426,11 @@ export class Game {
         audio.alarm(false);
         break;
       case 'mob':
+        audio.play('horde', { vol: 0.55, reverb: 0.9 });
+        break;
       case 'horde':
-        audio.play('mob', { vol: 0.9 });
+        audio.play('horde', { vol: 0.8, reverb: 1 });
+        audio.play('mob', { vol: 0.6 });
         break;
       case 'power':
         audio.play('power');
@@ -496,7 +523,7 @@ export class Game {
     this.stateT -= dt;
     if (this.isHost || this.stateT <= 0) {
       this.stateT = this.isHost ? 0 : Math.max(-0.05, this.stateT) + 1 / 30;
-      this.link.sendState({ slot: this.slot, x: p.x, z: p.z, yaw: p.yaw, pitch: p.pitch, flags: p.flags(), weapon: p.weaponId(), seq: this.seq++, time: performance.now() });
+      this.link.sendState({ slot: this.slot, x: p.x, z: p.z, yaw: p.yaw, pitch: p.pitch, flags: p.flags(), weapon: p.weaponId(), seq: this.seq++, time: performance.now(), inst: this.inst });
     }
     this.interpolate();
     // 지하/지상 전환
@@ -596,16 +623,56 @@ export class Game {
   }
 
   ambientSounds(dt, cam) {
+    // 좀비 목소리: 가까운 좀비마다 제 차례가 오면 (어슬렁 3.5~8초, 쫓을 때 1.4~3.6초마다), 한꺼번에 너무 겹치지 않게
     this.groanT -= dt;
+    const now = performance.now() / 1000;
     if (this.groanT <= 0) {
-      this.groanT = 0.35 + Math.random() * 0.5;
-      const near = this.zombieView.filter((z) => z.state !== 4 && Math.abs(z.x - cam.x) < 28 && Math.abs(z.z - cam.z) < 28);
-      if (near.length) {
-        const z = near[Math.floor(Math.random() * near.length)];
-        const chase = z.state === 2 || z.state === 3;
-        if (Math.random() < (chase ? 0.7 : 0.25)) audio.play('groan', { pos: [z.x, 1.6, z.z], vol: chase ? 1 : 0.6 });
+      this.groanT = 0.12;
+      let best = null;
+      let bestD = 34;
+      for (const z of this.zombieView) {
+        if (z.state === 4) continue;
+        const d = Math.hypot(z.x - cam.x, z.z - cam.z);
+        if (d > 34) continue;
+        let next = this.zNext.get(z.id);
+        if (next === undefined) {
+          next = now + Math.random() * 3;
+          this.zNext.set(z.id, next);
+        }
+        // 가까운 좀비가 먼저, 쫓는 좀비는 더 먼저
+        const score = d * (z.state === 2 || z.state === 3 ? 0.6 : 1);
+        if (next <= now && score < bestD) {
+          bestD = score;
+          best = z;
+        }
+      }
+      if (best && audio.voices() < 5) {
+        const chase = best.state === 2 || best.state === 3;
+        const kind = best.state === 3 ? 'snarl' : chase ? (Math.random() < 0.75 ? 'snarl' : 'moan') : 'moan';
+        audio.play(kind, { pos: [best.x, 1.6, best.z], vol: chase ? 1 : 0.8, reverb: this.region ? 0.6 : 0.22 });
+        this.zNext.set(best.id, now + (chase ? 1.4 + Math.random() * 2.2 : 3.5 + Math.random() * 4.5));
+      }
+      if (this.zNext.size > 300) {
+        const alive = new Set(this.zombieView.map((z) => z.id));
+        for (const id of this.zNext.keys()) if (!alive.has(Math.abs(id))) this.zNext.delete(id);
       }
     }
+    // 뛰어오는 좀비 발소리 (가까운 두 마리)
+    const runners = [];
+    for (const z of this.zombieView) {
+      if (z.state !== 2 || z.speed < 1.5) continue;
+      const d = Math.hypot(z.x - cam.x, z.z - cam.z);
+      if (d < 15) runners.push([d, z]);
+    }
+    runners.sort((a, b) => a[0] - b[0]);
+    for (const [, z] of runners.slice(0, 2)) {
+      const next = this.zStep.get(z.id) ?? now;
+      if (next <= now) {
+        audio.play('zstep', { pos: [z.x, 0.1, z.z], vol: 0.8 });
+        this.zStep.set(z.id, now + Math.max(0.22, Math.min(0.5, 1.2 / z.speed)));
+      }
+    }
+    if (this.zStep.size > 100) this.zStep.clear();
     this.distantT -= dt;
     if (this.distantT <= 0) {
       this.distantT = 18 + Math.random() * 30;

@@ -102,9 +102,9 @@ export function decodeSnapshot(buf) {
   return { tick, runId, time, finaleLeft, boatT, players, zombies };
 }
 
-/** 내 캐릭터 상태 (위치·시선·손전등·무기) + 보낸 시각(ms, 받는 쪽 지터 버퍼용) */
+/** 내 캐릭터 상태 (위치·시선·손전등·무기) + 보낸 시각(ms, 받는 쪽 지터 버퍼용) + 화면 번호 */
 export function encodePlayerState(st) {
-  const buf = new ArrayBuffer(17);
+  const buf = new ArrayBuffer(19);
   const v = new DataView(buf);
   v.setUint8(0, MSG.PSTATE);
   v.setUint8(1, st.slot);
@@ -116,6 +116,7 @@ export function encodePlayerState(st) {
   v.setUint8(10, st.weapon & 255);
   v.setUint16(11, st.seq & 0xffff, true);
   v.setUint32(13, Math.floor(st.time || 0) >>> 0, true);
+  v.setUint16(17, (st.inst || 0) & 0xffff, true);
   return buf;
 }
 
@@ -131,6 +132,7 @@ export function decodePlayerState(buf) {
     weapon: v.getUint8(10),
     seq: v.getUint16(11, true),
     time: buf.byteLength >= 17 ? v.getUint32(13, true) : 0,
+    inst: buf.byteLength >= 19 ? v.getUint16(17, true) : 0,
   };
 }
 
