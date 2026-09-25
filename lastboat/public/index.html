@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>마지막 배 — THE LAST BOAT</title>
+  <meta name="description" content="밤의 도시, 좀비를 뚫고 새벽 5시 마지막 구조선까지. 2인 협동 3D 좀비 슈팅 웹게임">
+  <meta name="theme-color" content="#07090f">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2307090f'/%3E%3Cpath d='M4 20h24l-4 6H8z' fill='%23c8a020'/%3E%3Ccircle cx='24' cy='8' r='4' fill='%23dfe6ff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }</script>
+</head>
+<body>
+<div id="app">
+  <!-- 타이틀 -->
+  <section class="screen active" id="scr-title">
+    <div class="title-bg" aria-hidden="true"></div>
+    <div class="title-wrap">
+      <h1 class="logo">마지막 배<small>THE LAST BOAT</small></h1>
+      <p class="tag">새벽 5시, 은하항에서 마지막 구조선이 떠난다.<br>길은 아무도 알려 주지 않는다.</p>
+      <div class="card">
+        <label class="field"><span>이름</span><input id="name" maxlength="10" placeholder="생존자" autocomplete="nickname"></label>
+        <div class="row"><span class="lbl">난이도</span><div class="chips" id="solo-diff"></div></div>
+        <button class="btn primary big" id="btn-solo">혼자 하기</button>
+        <div class="split"><span>둘이서</span></div>
+        <button class="btn accent big" id="btn-create">방 만들기</button>
+        <div class="join"><input id="code" maxlength="5" placeholder="초대코드" autocomplete="off" spellcheck="false"><button class="btn" id="btn-join">참가</button></div>
+        <p class="error" id="title-error"></p>
+      </div>
+      <div class="links"><button class="link" id="btn-help">조작법</button><button class="link" id="btn-settings">설정</button></div>
+      <p class="note">PC(키보드·마우스)용 게임입니다. 소리를 켜고 하세요 🎧</p>
+    </div>
+  </section>
+
+  <!-- 대기실 -->
+  <section class="screen" id="scr-lobby">
+    <div class="title-bg dim" aria-hidden="true"></div>
+    <div class="lobby card">
+      <div class="lobby-head"><button class="btn small ghost" id="btn-leave">← 나가기</button><h2>대기실</h2><button class="btn small ghost" id="btn-help2">조작법</button></div>
+      <div class="codebox">초대코드 <b id="lobby-code">-----</b> <button class="btn tiny" id="btn-copy">링크 복사</button></div>
+      <div class="slots"><div class="slot" id="slot-host"></div><div class="slot" id="slot-guest"></div></div>
+      <div class="row"><span class="lbl">난이도</span><div class="chips" id="diff-chips"></div></div>
+      <button class="btn primary big" id="btn-start">출발!</button>
+      <p class="sm">한 명이라도 죽으면 둘 다 처음부터 다시 시작합니다.</p>
+    </div>
+  </section>
+
+  <!-- 게임 -->
+  <section class="screen" id="scr-game">
+    <canvas id="view"></canvas>
+    <div id="hud">
+      <div id="objective"></div>
+      <div id="radio"></div>
+      <div id="finale" class="hidden"></div>
+      <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b id="hitmark"></b></div>
+      <div id="prompt"></div>
+      <svg id="progress" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" class="bg"/><circle cx="20" cy="20" r="18" id="progress-arc"/></svg>
+      <div id="msg"></div>
+      <div id="toasts-hud" class="hud-toasts"></div>
+      <div id="team">
+        <div class="pcard" id="me-card"><div class="top"><span class="nm"></span><span class="kit">✚</span><span class="bw">흑백</span><span class="hp"></span></div><div class="bar"><i></i></div></div>
+        <div class="pcard mate" id="mate-card"><div class="top"><span class="nm"></span><span class="kit">✚</span><span class="bw">흑백</span><span class="hp"></span></div><div class="bar"><i></i></div></div>
+      </div>
+      <div id="weapon"></div>
+      <div id="mate-marker" class="hidden"></div>
+      <div id="damage"></div>
+      <div id="dmg-dir"></div>
+      <div id="lowhp"></div>
+      <div id="downed" class="hidden"><h2>쓰러짐</h2><b>30</b><small></small></div>
+      <div id="tab-panel" class="hidden"></div>
+      <div id="fade"></div>
+      <div id="note-view" class="hidden"><div class="paper"><h3></h3><pre></pre><button class="btn small">닫기 (E)</button></div></div>
+      <div id="end-screen" class="hidden"></div>
+    </div>
+    <div id="click-to-play" class="hidden"><div><h2>클릭해서 시작</h2><p>마우스로 둘러보고 WASD 로 움직입니다. Esc 로 메뉴.</p></div></div>
+    <div id="pause" class="hidden"><div class="card"><h2>메뉴</h2><button class="btn primary big" id="btn-resume">계속하기</button><button class="btn" id="btn-pause-help">조작법</button><button class="btn" id="btn-pause-settings">설정</button><button class="btn" id="btn-quit">그만하기</button><p class="sm" id="pause-note"></p></div></div>
+  </section>
+
+  <div class="modal-back hidden" id="modal"><div class="card modal" id="modal-box"></div></div>
+  <div class="toast-box" id="toasts"></div>
+  <div class="loading hidden" id="loading"><div class="spinner"></div><p id="loading-text">불러오는 중…</p></div>
+</div>
+<script type="module" src="./js/client/main.js"></script>
+</body>
+</html>

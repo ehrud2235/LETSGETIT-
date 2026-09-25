@@ -1,5 +1,5 @@
 # Render 블루프린트: 저장소를 연결하면 이 설정대로 무료 웹 서비스가 만들어진다.
-# 두 게임은 서로 다른 서비스(다른 주소)로 따로 돌아간다.
+# 게임마다 서로 다른 서비스(다른 주소)로 따로 돌아간다.
 services:
   # 맞은편 — 2인 방탈출 (저장소 최상위 폴더)
   - type: web
@@ -12,6 +12,7 @@ services:
     buildFilter:
       ignoredPaths:
         - brawl/**
+        - lastboat/**
 
   # 물렁 난투 — 4인 물리 난투 (brawl 폴더만 사용)
   - type: web
@@ -19,6 +20,16 @@ services:
     runtime: node
     plan: free
     rootDir: brawl
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+
+  # 마지막 배 — 2인 협동 좀비 탈출 (lastboat 폴더만 사용)
+  - type: web
+    name: last-boat
+    runtime: node
+    plan: free
+    rootDir: lastboat
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
