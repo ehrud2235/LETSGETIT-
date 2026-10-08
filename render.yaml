@@ -13,6 +13,7 @@ services:
       ignoredPaths:
         - brawl/**
         - lastboat/**
+        - valoaim/**
 
   # 물렁 난투 — 4인 물리 난투 (brawl 폴더만 사용)
   - type: web
@@ -33,6 +34,17 @@ services:
     plan: free
     region: singapore
     rootDir: lastboat
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+
+  # 발로 에임장 — 바인드 맵 밴달 에임 연습 (valoaim 폴더만 사용, 혼자 하는 연습장)
+  - type: web
+    name: valo-aim
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: valoaim
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
